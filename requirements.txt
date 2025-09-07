@@ -1,10 +1,12 @@
-# Updated Requirements for GoFile Uploader Bot
 
-pyTelegramBotAPI==4.29.1
+pyrogram==2.0.106
+TgCrypto==1.2.5
 aiohttp==3.9.5
 aiofiles==23.2.0
 motor==3.4.0
 pymongo==4.7.3
-requests==2.31.0
+yt-dlp==2023.12.30
 python-dotenv==1.0.1
 python-dateutil==2.9.0
+tqdm==4.66.2
+colorlog==6.8.2
