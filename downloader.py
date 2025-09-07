@@ -1,5 +1,5 @@
 """
-Advanced Media Downloader with yt-dlp support
+Complete Media Downloader with yt-dlp support
 """
 
 import asyncio
@@ -69,9 +69,9 @@ class MediaDownloader:
         
         # Direct download user agents
         self.user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         ]
         
     def is_supported_platform(self, url: str) -> bool:
@@ -457,3 +457,150 @@ class MediaDownloader:
             "📱 Tumblr (tumblr.com)",
             "🔗 Direct file links"
         ]
+    
+    def get_platform_emoji(self, url: str) -> str:
+        """Get emoji for platform"""
+        domain = urlparse(url).netloc.lower()
+        
+        if 'youtube.com' in domain or 'youtu.be' in domain:
+            return '🎥'
+        elif 'instagram.com' in domain:
+            return '📸'
+        elif 'tiktok.com' in domain:
+            return '🎵'
+        elif 'twitter.com' in domain or 'x.com' in domain:
+            return '🐦'
+        elif 'facebook.com' in domain:
+            return '📘'
+        elif 'reddit.com' in domain:
+            return '🔴'
+        elif 'vimeo.com' in domain:
+            return '🎬'
+        elif 'soundcloud.com' in domain:
+            return '🎧'
+        elif 'twitch.tv' in domain:
+            return '🟣'
+        else:
+            return '🔗'
+    
+    async def extract_audio_from_video(self, video_path: str, audio_format: str = 'mp3') -> Optional[str]:
+        """Extract audio from video file"""
+        try:
+            output_path = video_path.rsplit('.', 1)[0] + f'.{audio_format}'
+            
+            opts = {
+                'format': 'bestaudio/best',
+                'extractaudio': True,
+                'audioformat': audio_format,
+                'outtmpl': output_path,
+                'quiet': True
+            }
+            
+            def extract():
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    ydl.download([video_path])
+            
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, extract)
+            
+            if os.path.exists(output_path):
+                return output_path
+            else:
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error extracting audio: {e}")
+            return None
+    
+    def is_video_platform(self, url: str) -> bool:
+        """Check if platform primarily hosts videos"""
+        video_platforms = [
+            'youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com',
+            'twitch.tv', 'tiktok.com', 'instagram.com/reel/', 'streamable.com'
+        ]
+        return any(platform in url.lower() for platform in video_platforms)
+    
+    def is_audio_platform(self, url: str) -> bool:
+        """Check if platform primarily hosts audio"""
+        audio_platforms = [
+            'soundcloud.com', 'spotify.com', 'bandcamp.com', 'mixcloud.com'
+        ]
+        return any(platform in url.lower() for platform in audio_platforms)
+    
+    async def get_media_metadata(self, url: str) -> Dict[str, Any]:
+        """Get detailed metadata for media"""
+        try:
+            info = await self.get_video_info(url)
+            if not info['success']:
+                return {}
+                
+            metadata = {
+                'title': info.get('title', 'Unknown'),
+                'uploader': info.get('uploader', 'Unknown'),
+                'duration': info.get('duration', 0),
+                'view_count': info.get('view_count', 0),
+                'upload_date': info.get('upload_date', ''),
+                'description': info.get('description', ''),
+                'thumbnail': info.get('thumbnail', ''),
+                'platform': self.utils.get_platform_from_url(url),
+                'url': url
+            }
+            
+            return metadata
+            
+        except Exception as e:
+            logger.error(f"Error getting media metadata: {e}")
+            return {}
+    
+    async def download_playlist(self, url: str, max_videos: int = 5) -> List[Dict[str, Any]]:
+        """Download playlist (limited number of videos)"""
+        try:
+            opts = self.ytdl_opts.copy()
+            opts.update({
+                'extract_flat': True,
+                'playlistend': max_videos,
+                'quiet': True
+            })
+            
+            def extract_playlist():
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    return ydl.extract_info(url, download=False)
+            
+            loop = asyncio.get_event_loop()
+            playlist_info = await loop.run_in_executor(None, extract_playlist)
+            
+            if not playlist_info or 'entries' not in playlist_info:
+                return []
+            
+            results = []
+            for entry in playlist_info['entries'][:max_videos]:
+                if entry:
+                    video_url = entry.get('url') or entry.get('webpage_url')
+                    if video_url:
+                        results.append({
+                            'title': entry.get('title', 'Unknown'),
+                            'url': video_url,
+                            'duration': entry.get('duration', 0)
+                        })
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error processing playlist: {e}")
+            return []
+    
+    def format_duration(self, seconds: int) -> str:
+        """Format duration in human readable format"""
+        if not seconds:
+            return "Unknown"
+            
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        secs = seconds % 60
+        
+        if hours:
+            return f"{hours}h {minutes}m {secs}s"
+        elif minutes:
+            return f"{minutes}m {secs}s"
+        else:
+            return f"{secs}s"
