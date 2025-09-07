@@ -14,22 +14,24 @@ class Config:
     """Bot configuration class"""
     
     # Bot settings
-    BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
+    API_ID: str = os.getenv("API_ID", "17760082")
+    API_HASH: str = os.getenv("API_HASH", "c3fc3cd44886967cf3c0e8585b5cad1c")
+    BOT_TOKEN: str = os.getenv("BOT_TOKEN", "5066445400:AAEGWQO2Ov6SNqaW5mcPwnkr6bUFatdiKtY")
     if not BOT_TOKEN:
         raise ValueError("BOT_TOKEN environment variable is required")
     
     # Database settings
-    MONGO_URI: str = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+    MONGO_URI: str = os.getenv("MONGO_URI", "mongodb+srv://usersdb:OxXu6uIVcxtLcJjr@cluster0.nn2rtsh.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
     DATABASE_NAME: str = os.getenv("DATABASE_NAME", "gofile_bot")
     
     # Admin settings
     ADMIN_IDS: List[int] = [
-        int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()
+        int(x.strip()) for x in os.getenv("ADMIN_IDS", "1809710185").split(",") if x.strip()
     ]
     
     # Force subscription settings
-    FORCE_SUB_CHANNEL: Optional[str] = os.getenv("FORCE_SUB_CHANNEL")
-    FORCE_SUB_ENABLED: bool = os.getenv("FORCE_SUB_ENABLED", "False").lower() == "true"
+    FORCE_SUB_CHANNEL: Optional[str] = os.getenv("FORCE_SUB_CHANNEL", "@XtreamBotz")
+    FORCE_SUB_ENABLED: bool = os.getenv("FORCE_SUB_ENABLED", "true").lower() == "true"
     
     # GoFile.io API settings
     GOFILE_API_TOKEN: Optional[str] = os.getenv("GOFILE_API_TOKEN")
