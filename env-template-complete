@@ -1,36 +1,10 @@
-# GoFile Uploader Bot Configuration - COMPLETE SETUP
-# Copy this file to .env and fill in your values
-
-# ================================
-# REQUIRED CREDENTIALS
-# ================================
-
-# Get from @BotFather on Telegram
 BOT_TOKEN=your_bot_token_here
-
-# Get from https://my.telegram.org (REQUIRED for Pyrogram)
 API_ID=your_api_id_here
 API_HASH=your_api_hash_here
-
-# Your Telegram User ID (will be admin)
 ADMIN_IDS=your_user_id_here
-
-# ================================
-# DATABASE CONFIGURATION
-# ================================
-
-# MongoDB connection string
 MONGO_URI=mongodb://localhost:27017/
 DATABASE_NAME=gofile_bot
-
-# ================================
-# FORCE SUBSCRIPTION (Optional)
-# ================================
-
-# Enable/disable force subscription
 FORCE_SUB_ENABLED=false
-
-# Channel username (with or without @)
 FORCE_SUB_CHANNEL=@your_channel_username
 
 # ================================
