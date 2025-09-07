@@ -1,0 +1,90 @@
+# Premium GoFile Bot v3.0 Configuration
+# Copy this file to .env and fill in your values
+
+# ================================
+# REQUIRED CREDENTIALS
+# ================================
+
+# Get from https://my.telegram.org
+API_ID=your_api_id_here
+API_HASH=your_api_hash_here
+
+# Get from @BotFather on Telegram
+BOT_TOKEN=your_bot_token_here
+
+# Your Telegram user ID (get from @userinfobot)
+# For multiple admins: 123456789,987654321
+ADMIN_IDS=your_user_id_here
+
+# ================================
+# DATABASE CONFIGURATION
+# ================================
+
+# MongoDB connection string
+# Local: mongodb://localhost:27017/
+# Atlas: mongodb+srv://username:password@cluster.mongodb.net/
+MONGO_URI=mongodb://localhost:27017/
+DATABASE_NAME=premium_gofile_bot
+
+# ================================
+# PREMIUM FEATURES (OPTIONAL)
+# ================================
+
+# File size limits (bytes) - 4GB default
+MAX_FILE_SIZE=4294967296
+MAX_DOWNLOAD_SIZE=10737418240
+
+# Concurrent operations
+MAX_CONCURRENT_UPLOADS=10
+MAX_CONCURRENT_DOWNLOADS=10
+
+# ================================
+# FORCE SUBSCRIPTION (OPTIONAL)
+# ================================
+
+# Require users to join channel before using bot
+FORCE_SUB_ENABLED=false
+FORCE_SUB_CHANNEL=@your_channel
+
+# ================================
+# GOFILE INTEGRATION (OPTIONAL)
+# ================================
+
+# Get from https://gofile.io/myprofile for premium features
+GOFILE_API_TOKEN=your_gofile_token
+
+# ================================
+# DIRECTORIES (OPTIONAL)
+# ================================
+
+DOWNLOAD_DIR=./downloads
+TEMP_DIR=./temp
+COOKIES_DIR=./cookies
+SESSIONS_DIR=./sessions
+
+# ================================
+# PERFORMANCE TUNING (OPTIONAL)
+# ================================
+
+# File operation chunk sizes (bytes)
+CHUNK_SIZE=1048576
+UPLOAD_CHUNK_SIZE=8388608
+
+# Timeout settings (seconds)
+REQUEST_TIMEOUT=120
+DOWNLOAD_TIMEOUT=3600
+UPLOAD_TIMEOUT=7200
+
+# Retry configuration
+MAX_RETRIES=5
+RETRY_DELAY=2
+
+# ================================
+# YT-DLP CONFIGURATION (OPTIONAL)
+# ================================
+
+YTDLP_ENABLED=true
+YTDLP_COOKIES_ENABLED=true
+YTDLP_VIDEO_FORMAT=best[height<=2160]
+YTDLP_AUDIO_FORMAT=best
+YTDLP_EXTRACT_AUDIO=false

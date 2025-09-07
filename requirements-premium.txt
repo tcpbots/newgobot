@@ -1,0 +1,47 @@
+# Premium GoFile Uploader Bot v3.0 - Requirements
+# Reference: TheHamkerCat/WilliamButcherBot + ssebastianoo/yt-dlp-telegram
+
+# Core Framework (Latest versions)
+pyrogram==2.0.106
+TgCrypto==1.2.5
+
+# HTTP & File Operations
+aiohttp==3.9.5  
+aiofiles==23.2.0
+requests==2.31.0
+
+# Database (Latest MongoDB driver)
+motor==3.4.0
+pymongo==4.7.3
+
+# Media Processing (Premium yt-dlp)
+yt-dlp==2024.8.6
+ffmpeg-python==0.2.0
+
+# Environment & Config
+python-dotenv==1.0.1
+
+# Progress & UI
+tqdm==4.66.4
+rich==13.7.1
+
+# Date/Time utilities  
+python-dateutil==2.9.0
+
+# Better JSON handling
+orjson==3.10.6
+
+# Advanced HTTP features
+httpx==0.27.0
+
+# Async utilities
+asyncio-mqtt==0.16.2
+
+# Better logging
+colorlog==6.8.2
+
+# File type detection
+python-magic==0.4.27
+
+# Better error tracking
+sentry-sdk==2.8.0
