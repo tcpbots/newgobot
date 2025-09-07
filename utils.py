@@ -1,5 +1,5 @@
 """
-Utility functions - COMPLETE REWRITE for Pyrogram
+Complete Utility functions - REWRITE for Pyrogram
 """
 
 import asyncio
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class Utils:
-    """Utility functions for the bot"""
+    """Complete utility functions for the bot"""
     
     def __init__(self, config: Config, database: Database):
         self.config = config
@@ -542,3 +542,167 @@ class Utils:
             
         eta_seconds = file_size / speed
         return self.format_duration(int(eta_seconds))
+    
+    def get_file_extension(self, filename: str) -> str:
+        """Get file extension"""
+        return os.path.splitext(filename)[1].lower()
+    
+    def is_supported_file_type(self, filename: str) -> bool:
+        """Check if file type is supported"""
+        supported_extensions = [
+            '.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm',
+            '.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a',
+            '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp',
+            '.pdf', '.doc', '.docx', '.txt', '.zip', '.rar'
+        ]
+        
+        ext = self.get_file_extension(filename)
+        return ext in supported_extensions
+    
+    def format_bytes_per_second(self, bytes_per_sec: float) -> str:
+        """Format bytes per second as speed"""
+        return f"{self.format_file_size(int(bytes_per_sec))}/s"
+    
+    def calculate_eta(self, total_size: int, downloaded: int, speed: float) -> int:
+        """Calculate estimated time remaining"""
+        if speed <= 0:
+            return 0
+            
+        remaining = total_size - downloaded
+        return int(remaining / speed)
+    
+    def get_mime_type(self, filename: str) -> str:
+        """Get MIME type from filename"""
+        import mimetypes
+        mime_type, _ = mimetypes.guess_type(filename)
+        return mime_type or 'application/octet-stream'
+    
+    def truncate_text(self, text: str, max_length: int = 100) -> str:
+        """Truncate text to specified length"""
+        if len(text) <= max_length:
+            return text
+        return text[:max_length - 3] + "..."
+    
+    def format_number(self, number: int) -> str:
+        """Format large numbers with K, M, B suffixes"""
+        if number < 1000:
+            return str(number)
+        elif number < 1000000:
+            return f"{number/1000:.1f}K"
+        elif number < 1000000000:
+            return f"{number/1000000:.1f}M"
+        else:
+            return f"{number/1000000000:.1f}B"
+    
+    async def get_url_info(self, url: str) -> Dict[str, Any]:
+        """Get basic information about a URL"""
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            headers = {'User-Agent': 'GoFileUploaderBot/2.0'}
+            
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                async with session.head(url) as response:
+                    return {
+                        'status': response.status,
+                        'content_type': response.headers.get('content-type', ''),
+                        'content_length': int(response.headers.get('content-length', 0)),
+                        'filename': self.get_filename_from_url(url, response.headers)
+                    }
+                    
+        except Exception as e:
+            logger.error(f"Error getting URL info: {e}")
+            return {}
+    
+    def create_file_tree(self, directory: str) -> List[str]:
+        """Create a file tree structure"""
+        try:
+            tree = []
+            for root, dirs, files in os.walk(directory):
+                level = root.replace(directory, '').count(os.sep)
+                indent = ' ' * 2 * level
+                tree.append(f"{indent}{os.path.basename(root)}/")
+                
+                subindent = ' ' * 2 * (level + 1)
+                for file in files:
+                    tree.append(f"{subindent}{file}")
+                    
+            return tree
+        except Exception as e:
+            logger.error(f"Error creating file tree: {e}")
+            return []
+    
+    def validate_file_size(self, size: int, max_size: int) -> bool:
+        """Validate file size against maximum"""
+        return 0 < size <= max_size
+    
+    def get_file_age(self, filepath: str) -> int:
+        """Get file age in seconds"""
+        try:
+            return int(time.time() - os.path.getmtime(filepath))
+        except Exception:
+            return 0
+    
+    async def compress_file(self, filepath: str, compression_level: int = 6) -> Optional[str]:
+        """Compress file using gzip (if needed)"""
+        try:
+            import gzip
+            
+            compressed_path = f"{filepath}.gz"
+            
+            async with aiofiles.open(filepath, 'rb') as f_in:
+                with gzip.open(compressed_path, 'wb', compresslevel=compression_level) as f_out:
+                    content = await f_in.read()
+                    f_out.write(content)
+            
+            return compressed_path if os.path.exists(compressed_path) else None
+            
+        except Exception as e:
+            logger.error(f"Error compressing file: {e}")
+            return None
+    
+    def get_system_info(self) -> Dict[str, Any]:
+        """Get system information"""
+        try:
+            import psutil
+            
+            return {
+                'cpu_percent': psutil.cpu_percent(interval=1),
+                'memory_percent': psutil.virtual_memory().percent,
+                'disk_usage': psutil.disk_usage('/').percent,
+                'boot_time': datetime.fromtimestamp(psutil.boot_time())
+            }
+        except Exception as e:
+            logger.error(f"Error getting system info: {e}")
+            return {}
+    
+    def format_timestamp(self, timestamp: datetime) -> str:
+        """Format timestamp for display"""
+        return timestamp.strftime('%Y-%m-%d %H:%M:%S')
+    
+    def calculate_progress_eta(self, start_time: float, progress: float) -> str:
+        """Calculate ETA based on progress"""
+        if progress <= 0:
+            return "Unknown"
+            
+        elapsed = time.time() - start_time
+        total_time = elapsed / (progress / 100)
+        remaining = total_time - elapsed
+        
+        return self.format_duration(int(remaining))
+    
+    async def create_backup(self, source_path: str, backup_dir: str) -> bool:
+        """Create backup of a file"""
+        try:
+            import shutil
+            
+            Path(backup_dir).mkdir(parents=True, exist_ok=True)
+            filename = os.path.basename(source_path)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            backup_path = os.path.join(backup_dir, f"{timestamp}_{filename}")
+            
+            shutil.copy2(source_path, backup_path)
+            return os.path.exists(backup_path)
+            
+        except Exception as e:
+            logger.error(f"Error creating backup: {e}")
+            return False
