@@ -1,163 +1,232 @@
 """
-Bot command and message handlers
+Bot handlers using Pyrogram - COMPLETE REWRITE
 """
 
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
-from telebot import types
-from telebot.async_telebot import AsyncTeleBot
-from telebot.asyncio_helper import ApiTelegramException
+from pyrogram import Client, filters
+from pyrogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.errors import UserNotParticipant, ChatAdminRequired, ChannelPrivate
 
 from config import Config
 from database import Database
 from utils import Utils
+from downloader import MediaDownloader
 
 logger = logging.getLogger(__name__)
 
 
 class BotHandlers:
-    """Bot handlers for commands and messages"""
+    """Bot handlers using Pyrogram"""
     
-    def __init__(self, bot: AsyncTeleBot, database: Database, utils: Utils, config: Config):
-        self.bot = bot
+    def __init__(self, app: Client, database: Database, utils: Utils, downloader: MediaDownloader, config: Config):
+        self.app = app
         self.db = database
         self.utils = utils
+        self.downloader = downloader
         self.config = config
-        self.user_last_activity = {}
         
-    def setup_handlers(self) -> None:
-        """Set up all bot handlers"""
+        # Store active operations for cancellation
+        self.active_operations: Dict[int, asyncio.Task] = {}
+        
+    async def setup_handlers(self):
+        """Setup all message and callback handlers"""
+        
         # Command handlers
-        self.bot.message_handler(commands=['start'])(self.start_command)
-        self.bot.message_handler(commands=['help'])(self.help_command)
-        self.bot.message_handler(commands=['upload'])(self.upload_command)
-        self.bot.message_handler(commands=['download'])(self.download_command)
-        self.bot.message_handler(commands=['settings'])(self.settings_command)
-        self.bot.message_handler(commands=['myfiles'])(self.myfiles_command)
-        self.bot.message_handler(commands=['account'])(self.account_command)
-        self.bot.message_handler(commands=['stats'])(self.stats_command)
-        
+        @self.app.on_message(filters.command("start") & filters.private)
+        async def start_command(client, message):
+            await self.handle_start(message)
+            
+        @self.app.on_message(filters.command("help") & filters.private)
+        async def help_command(client, message):
+            await self.handle_help(message)
+            
+        @self.app.on_message(filters.command("upload") & filters.private)
+        async def upload_command(client, message):
+            await self.handle_upload_command(message)
+            
+        @self.app.on_message(filters.command("download") & filters.private)
+        async def download_command(client, message):
+            await self.handle_download_command(message)
+            
+        @self.app.on_message(filters.command("cancel") & filters.private)
+        async def cancel_command(client, message):
+            await self.handle_cancel(message)
+            
+        @self.app.on_message(filters.command("settings") & filters.private)
+        async def settings_command(client, message):
+            await self.handle_settings(message)
+            
+        @self.app.on_message(filters.command("myfiles") & filters.private)
+        async def myfiles_command(client, message):
+            await self.handle_myfiles(message)
+            
+        @self.app.on_message(filters.command("account") & filters.private)
+        async def account_command(client, message):
+            await self.handle_account(message)
+            
+        @self.app.on_message(filters.command("stats") & filters.private)
+        async def stats_command(client, message):
+            await self.handle_stats(message)
+            
+        @self.app.on_message(filters.command("about") & filters.private)
+        async def about_command(client, message):
+            await self.handle_about(message)
+            
         # Admin commands
-        self.bot.message_handler(commands=['admin'])(self.admin_command)
-        self.bot.message_handler(commands=['broadcast'])(self.broadcast_command)
-        self.bot.message_handler(commands=['stats_admin'])(self.admin_stats_command)
-        self.bot.message_handler(commands=['users'])(self.users_command)
-        self.bot.message_handler(commands=['ban'])(self.ban_command)
-        self.bot.message_handler(commands=['unban'])(self.unban_command)
-        self.bot.message_handler(commands=['force_sub'])(self.force_sub_command)
-        
+        @self.app.on_message(filters.command("admin") & filters.private)
+        async def admin_command(client, message):
+            await self.handle_admin(message)
+            
+        @self.app.on_message(filters.command("broadcast") & filters.private)
+        async def broadcast_command(client, message):
+            await self.handle_broadcast(message)
+            
+        @self.app.on_message(filters.command("users") & filters.private)
+        async def users_command(client, message):
+            await self.handle_users_list(message)
+            
+        @self.app.on_message(filters.command("ban") & filters.private)
+        async def ban_command(client, message):
+            await self.handle_ban_user(message)
+            
+        @self.app.on_message(filters.command("unban") & filters.private)
+        async def unban_command(client, message):
+            await self.handle_unban_user(message)
+            
+        @self.app.on_message(filters.command("stats_admin") & filters.private)
+        async def admin_stats_command(client, message):
+            await self.handle_admin_stats(message)
+            
+        @self.app.on_message(filters.command("force_sub") & filters.private)
+        async def force_sub_command(client, message):
+            await self.handle_force_sub_settings(message)
+            
         # File handlers
-        self.bot.message_handler(content_types=self.config.ALLOWED_FILE_TYPES)(self.file_handler)
-        
-        # Text message handler
-        self.bot.message_handler(func=lambda message: True)(self.text_handler)
-        
+        @self.app.on_message(
+            (filters.document | filters.photo | filters.video | 
+             filters.audio | filters.voice | filters.video_note | 
+             filters.animation) & filters.private
+        )
+        async def file_handler(client, message):
+            await self.handle_file_upload(message)
+            
+        # URL handler (text messages that are URLs)
+        @self.app.on_message(filters.text & filters.private)
+        async def text_handler(client, message):
+            await self.handle_text_message(message)
+            
         # Callback query handlers
-        self.bot.callback_query_handler(func=lambda call: True)(self.callback_handler)
-        
-        logger.info("Bot handlers set up successfully")
-        
+        @self.app.on_callback_query()
+        async def callback_handler(client, callback_query):
+            await self.handle_callback_query(callback_query)
+            
+        logger.info("✅ All handlers registered successfully")
+    
+    # Utility methods
     async def check_subscription(self, user_id: int) -> bool:
-        """Check if user is subscribed to the required channel"""
+        """Check if user is subscribed to required channel"""
         if not self.config.FORCE_SUB_ENABLED or not self.config.FORCE_SUB_CHANNEL:
             return True
             
         try:
-            member = await self.bot.get_chat_member(self.config.FORCE_SUB_CHANNEL, user_id)
-            return member.status in ['member', 'administrator', 'creator']
+            member = await self.app.get_chat_member(self.config.FORCE_SUB_CHANNEL, user_id)
+            return member.status in ["member", "administrator", "creator"]
+        except (UserNotParticipant, ChannelPrivate, ChatAdminRequired) as e:
+            logger.warning(f"Subscription check failed for user {user_id}: {e}")
+            return True  # Allow access if we can't verify
         except Exception as e:
-            logger.error(f"Failed to check subscription for user {user_id}: {e}")
-            return False
-            
-    async def check_user_permissions(self, message: types.Message) -> bool:
-        """Check user permissions and rate limits"""
+            logger.error(f"Error checking subscription: {e}")
+            return True
+    
+    async def check_user_permissions(self, message: Message) -> bool:
+        """Check if user has permission to use the bot"""
         user_id = message.from_user.id
         
-        # Check if user is banned
+        # Check if banned
         if await self.db.is_user_banned(user_id):
-            await self.bot.reply_to(message, self.config.ERROR_MESSAGES["user_banned"])
+            await message.reply(self.config.ERROR_MESSAGES["user_banned"])
             return False
             
         # Check subscription
         if not await self.check_subscription(user_id):
-            await self.send_subscription_message(message)
+            await self.send_subscription_required(message)
             return False
             
         return True
-        
-    async def send_subscription_message(self, message: types.Message) -> None:
+    
+    async def send_subscription_required(self, message: Message):
         """Send subscription required message"""
-        markup = types.InlineKeyboardMarkup()
+        if not self.config.FORCE_SUB_CHANNEL:
+            return
+            
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "🔗 Join Channel", 
+                url=f"https://t.me/{self.config.FORCE_SUB_CHANNEL.lstrip('@')}"
+            )],
+            [InlineKeyboardButton(
+                "✅ I've Joined", 
+                callback_data="check_subscription"
+            )]
+        ])
         
-        join_btn = types.InlineKeyboardButton(
-            "🔗 Join Channel",
-            url=f"https://t.me/{self.config.FORCE_SUB_CHANNEL.lstrip('@')}"
-        )
-        
-        check_btn = types.InlineKeyboardButton(
-            "✅ I've Joined",
-            callback_data="check_subscription"
-        )
-        
-        markup.row(join_btn)
-        markup.row(check_btn)
-        
-        await self.bot.reply_to(
-            message,
+        await message.reply(
             self.config.ERROR_MESSAGES["not_subscribed"],
-            reply_markup=markup
+            reply_markup=keyboard
         )
-        
+    
     # Command handlers
-    async def start_command(self, message: types.Message) -> None:
+    async def handle_start(self, message: Message):
         """Handle /start command"""
         try:
-            user_id = message.from_user.id
+            user = message.from_user
             
-            # Create user if doesn't exist
+            # Create/update user in database
             user_data = {
-                "user_id": user_id,
-                "username": message.from_user.username,
-                "first_name": message.from_user.first_name,
-                "last_name": message.from_user.last_name
+                "user_id": user.id,
+                "username": user.username,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "language_code": user.language_code
             }
-            
             await self.db.create_user(user_data)
             
             # Check permissions
             if not await self.check_user_permissions(message):
                 return
-                
-            # Send welcome message
-            markup = types.InlineKeyboardMarkup()
-            markup.row(
-                types.InlineKeyboardButton("📁 Upload File", callback_data="help_upload"),
-                types.InlineKeyboardButton("🔗 Download URL", callback_data="help_download")
-            )
-            markup.row(
-                types.InlineKeyboardButton("⚙️ Settings", callback_data="settings"),
-                types.InlineKeyboardButton("📊 My Stats", callback_data="stats")
-            )
-            markup.row(
-                types.InlineKeyboardButton("❓ Help", callback_data="help")
-            )
             
-            await self.bot.reply_to(
-                message,
+            # Create welcome keyboard
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("📁 Upload File", callback_data="help_upload"),
+                    InlineKeyboardButton("🔗 Download URL", callback_data="help_download")
+                ],
+                [
+                    InlineKeyboardButton("⚙️ Settings", callback_data="user_settings"),
+                    InlineKeyboardButton("📊 My Stats", callback_data="user_stats")
+                ],
+                [
+                    InlineKeyboardButton("❓ Help", callback_data="show_help"),
+                    InlineKeyboardButton("ℹ️ About", callback_data="show_about")
+                ]
+            ])
+            
+            await message.reply(
                 self.config.WELCOME_MESSAGE,
-                reply_markup=markup,
-                parse_mode='Markdown'
+                reply_markup=keyboard
             )
             
         except Exception as e:
-            logger.error(f"Error in start command: {e}")
-            await self.bot.reply_to(message, "❌ An error occurred. Please try again.")
-            
-    async def help_command(self, message: types.Message) -> None:
+            logger.error(f"Error in start handler: {e}")
+            await message.reply(self.config.ERROR_MESSAGES["processing_error"])
+    
+    async def handle_help(self, message: Message):
         """Handle /help command"""
         try:
             if not await self.check_user_permissions(message):
@@ -168,461 +237,420 @@ class BotHandlers:
             # Add admin help for admins
             if self.config.is_admin(message.from_user.id):
                 help_text += f"\n\n{self.config.ADMIN_HELP_MESSAGE}"
-                
-            await self.bot.reply_to(message, help_text, parse_mode='Markdown')
+            
+            # Add supported platforms
+            platforms = await self.downloader.get_supported_platforms_list()
+            help_text += f"\n\n📋 **Supported Platforms:**\n"
+            help_text += "\n".join(platforms[:8])  # Show first 8
+            help_text += f"\n\n💡 **Quick Tips:**\n"
+            help_text += "• Send any file to upload to GoFile.io\n"
+            help_text += "• Send any URL to download and upload\n"
+            help_text += "• Use quality selection for videos\n"
+            help_text += "• Extract audio from videos"
+            
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("🎥 Video Download", callback_data="help_video"),
+                    InlineKeyboardButton("🎵 Audio Extract", callback_data="help_audio")
+                ],
+                [InlineKeyboardButton("📱 All Platforms", callback_data="show_platforms")]
+            ])
+            
+            await message.reply(help_text, reply_markup=keyboard)
             
         except Exception as e:
-            logger.error(f"Error in help command: {e}")
-            
-    async def upload_command(self, message: types.Message) -> None:
+            logger.error(f"Error in help handler: {e}")
+    
+    async def handle_upload_command(self, message: Message):
         """Handle /upload command"""
         try:
             if not await self.check_user_permissions(message):
                 return
-                
-            # Check if replying to a file
+            
             if message.reply_to_message:
-                await self.process_file_upload(message.reply_to_message)
+                await self.handle_file_upload(message.reply_to_message)
             else:
-                await self.bot.reply_to(
-                    message,
-                    "📁 Please reply to a file with /upload command to upload it to GoFile.io"
+                await message.reply(
+                    "📁 **File Upload**\n\n"
+                    "Please reply to a file with /upload or simply send me any file.\n\n"
+                    "📊 **Supported:**\n"
+                    "• Documents, photos, videos, audio\n"
+                    "• Up to 4GB per file\n"
+                    "• All file types supported"
                 )
                 
         except Exception as e:
             logger.error(f"Error in upload command: {e}")
-            
-    async def download_command(self, message: types.Message) -> None:
+    
+    async def handle_download_command(self, message: Message):
         """Handle /download command"""
         try:
             if not await self.check_user_permissions(message):
                 return
-                
+            
             # Extract URL from command
             command_parts = message.text.split(maxsplit=1)
             if len(command_parts) < 2:
-                await self.bot.reply_to(
-                    message,
-                    "🔗 Please provide a URL to download:\n\n`/download https://example.com/file.zip`",
-                    parse_mode='Markdown'
+                platforms = await self.downloader.get_supported_platforms_list()
+                platform_text = "\n".join(platforms[:10])
+                
+                await message.reply(
+                    f"🔗 **Download from URL**\n\n"
+                    f"**Usage:** `/download <url>`\n\n"
+                    f"**Example:**\n"
+                    f"`/download https://youtube.com/watch?v=...`\n\n"
+                    f"📋 **Supported Platforms:**\n{platform_text}\n\n"
+                    f"📊 **Limits:**\n"
+                    f"• Max download: {self.config.get_download_size_limit_gb():.1f}GB\n"
+                    f"• Quality selection available\n"
+                    f"• Audio extraction supported"
                 )
                 return
-                
-            url = command_parts[1].strip()
             
-            # Validate URL
-            if not self.utils.is_valid_url(url):
-                await self.bot.reply_to(message, self.config.ERROR_MESSAGES["invalid_url"])
-                return
-                
-            # Start download process
-            await self.download_and_upload(message, url)
+            url = command_parts[1].strip()
+            await self.handle_url_download(message, url)
             
         except Exception as e:
             logger.error(f"Error in download command: {e}")
+    
+    async def handle_cancel(self, message: Message):
+        """Handle /cancel command"""
+        try:
+            user_id = message.from_user.id
             
-    async def settings_command(self, message: types.Message) -> None:
+            if user_id in self.active_operations:
+                # Cancel the active operation
+                task = self.active_operations[user_id]
+                task.cancel()
+                del self.active_operations[user_id]
+                
+                await message.reply(self.config.ERROR_MESSAGES["operation_cancelled"])
+            else:
+                await message.reply(self.config.ERROR_MESSAGES["no_active_operation"])
+                
+        except Exception as e:
+            logger.error(f"Error in cancel handler: {e}")
+    
+    async def handle_settings(self, message: Message):
         """Handle /settings command"""
         try:
             if not await self.check_user_permissions(message):
                 return
-                
-            await self.bot.reply_to(
-                message,
-                "⚙️ **Settings**\n\nSettings panel coming soon!",
-                parse_mode='Markdown'
-            )
+            
+            user = await self.db.get_user(message.from_user.id)
+            if not user:
+                await message.reply("❌ User not found. Please use /start first.")
+                return
+            
+            settings = user.get('settings', self.config.DEFAULT_USER_SETTINGS)
+            
+            settings_text = f"⚙️ **Your Settings**\n\n"
+            settings_text += f"👤 **User:** {user.get('first_name', 'Unknown')}\n"
+            settings_text += f"🆔 **ID:** `{user['user_id']}`\n"
+            settings_text += f"📅 **Joined:** {user.get('join_date', datetime.utcnow()).strftime('%Y-%m-%d')}\n\n"
+            
+            settings_text += f"🎥 **Video Quality:** {settings.get('default_video_quality', 'best[height<=720]')}\n"
+            settings_text += f"🎵 **Audio Quality:** {settings.get('default_audio_quality', 'bestaudio')}\n"
+            settings_text += f"🔊 **Extract Audio:** {'Yes' if settings.get('extract_audio', False) else 'No'}\n"
+            settings_text += f"🔔 **Notifications:** {'Enabled' if settings.get('notifications', True) else 'Disabled'}\n\n"
+            
+            settings_text += f"📊 **Limits:**\n"
+            settings_text += f"• Max Upload: {self.config.get_file_size_limit_gb():.1f}GB\n"
+            settings_text += f"• Max Download: {self.config.get_download_size_limit_gb():.1f}GB"
+            
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("🎥 Video Settings", callback_data="settings_video"),
+                    InlineKeyboardButton("🎵 Audio Settings", callback_data="settings_audio")
+                ],
+                [
+                    InlineKeyboardButton("🔔 Notifications", callback_data="settings_notifications"),
+                    InlineKeyboardButton("🗑️ Auto Delete", callback_data="settings_autodelete")
+                ],
+                [InlineKeyboardButton("🔗 GoFile Account", callback_data="gofile_account")]
+            ])
+            
+            await message.reply(settings_text, reply_markup=keyboard)
             
         except Exception as e:
-            logger.error(f"Error in settings command: {e}")
-            
-    async def myfiles_command(self, message: types.Message) -> None:
+            logger.error(f"Error in settings handler: {e}")
+    
+    async def handle_myfiles(self, message: Message):
         """Handle /myfiles command"""
         try:
             if not await self.check_user_permissions(message):
                 return
-                
-            files = await self.db.get_user_files(message.from_user.id, limit=10)
+            
+            files = await self.db.get_user_files(message.from_user.id, limit=15)
             
             if not files:
-                await self.bot.reply_to(
-                    message,
-                    "📁 You haven't uploaded any files yet. Send me a file to get started!"
+                await message.reply(
+                    "📁 **Your Files**\n\n"
+                    "You haven't uploaded any files yet.\n\n"
+                    "💡 **Get Started:**\n"
+                    "• Send me any file to upload to GoFile.io\n"
+                    "• Send any URL to download and upload\n"
+                    "• Up to 4GB per file supported!"
                 )
                 return
-                
+            
             files_text = "📁 **Your Recent Files:**\n\n"
             
             for i, file_doc in enumerate(files, 1):
-                file_name = file_doc.get('file_name', 'Unknown')
-                file_size = self.utils.format_file_size(file_doc.get('file_size', 0))
-                upload_date = file_doc.get('upload_date', datetime.utcnow()).strftime('%Y-%m-%d')
+                name = file_doc.get('file_name', 'Unknown')[:30]
+                size = self.utils.format_file_size(file_doc.get('file_size', 0))
+                date = file_doc.get('upload_date', datetime.utcnow()).strftime('%m/%d')
+                gofile_id = file_doc.get('gofile_id', '')
                 
-                files_text += f"{i}. **{file_name}**\n"
-                files_text += f"   📊 Size: {file_size}\n"
-                files_text += f"   📅 Date: {upload_date}\n"
-                files_text += f"   🔗 [Download](https://gofile.io/d/{file_doc.get('gofile_id', '')})\n\n"
-                
-            await self.bot.reply_to(
-                message,
-                files_text,
-                parse_mode='Markdown',
-                disable_web_page_preview=True
-            )
+                files_text += f"{i}. **{name}**\n"
+                files_text += f"   📊 {size} • 📅 {date} • "
+                files_text += f"[🔗 Download](https://gofile.io/d/{gofile_id})\n\n"
+            
+            # Get user stats
+            user_stats = await self.db.get_user_stats(message.from_user.id)
+            total_files = user_stats.get('files_uploaded', len(files))
+            total_size = self.utils.format_file_size(user_stats.get('total_size', 0))
+            
+            files_text += f"📊 **Summary:**\n"
+            files_text += f"• Total Files: {total_files}\n"
+            files_text += f"• Total Size: {total_size}"
+            
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("📊 Detailed Stats", callback_data="user_stats"),
+                    InlineKeyboardButton("🔄 Refresh", callback_data="refresh_files")
+                ]
+            ])
+            
+            await message.reply(files_text, reply_markup=keyboard, disable_web_page_preview=True)
             
         except Exception as e:
-            logger.error(f"Error in myfiles command: {e}")
-            
-    async def account_command(self, message: types.Message) -> None:
+            logger.error(f"Error in myfiles handler: {e}")
+    
+    async def handle_account(self, message: Message):
         """Handle /account command"""
         try:
             if not await self.check_user_permissions(message):
                 return
+            
+            user = await self.db.get_user(message.from_user.id)
+            gofile_account = user.get('gofile_account', {}) if user else {}
+            
+            account_text = "🔗 **GoFile Account Management**\n\n"
+            
+            if gofile_account.get('token'):
+                account_text += f"✅ **Account Linked**\n"
+                account_text += f"🆔 Account ID: `{gofile_account.get('account_id', 'Unknown')}`\n"
+                account_text += f"🎯 Tier: {gofile_account.get('tier', 'Unknown')}\n\n"
+                account_text += f"✨ **Benefits:**\n"
+                account_text += f"• Manage files from GoFile dashboard\n"
+                account_text += f"• Access to premium features\n"
+                account_text += f"• Extended file retention\n"
+                account_text += f"• Priority support"
                 
-            await self.bot.reply_to(
-                message,
-                "🔗 **GoFile Account**\n\nAccount management coming soon!",
-                parse_mode='Markdown'
-            )
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🗑️ Unlink Account", callback_data="gofile_unlink")],
+                    [InlineKeyboardButton("🔄 Refresh Token", callback_data="gofile_refresh")]
+                ])
+            else:
+                account_text += f"❌ **No Account Linked**\n\n"
+                account_text += f"📝 **Current Status:** Anonymous uploads\n\n"
+                account_text += f"🔗 **Link Your Account:**\n"
+                account_text += f"1. Get your API token from [GoFile.io](https://gofile.io/myprofile)\n"
+                account_text += f"2. Click 'Link Account' below\n"
+                account_text += f"3. Send your API token\n\n"
+                account_text += f"✨ **Benefits of linking:**\n"
+                account_text += f"• Manage all your files\n"
+                account_text += f"• Access premium features\n"
+                account_text += f"• Better file retention"
+                
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔗 Link Account", callback_data="gofile_link")],
+                    [InlineKeyboardButton("❓ How to Get Token", callback_data="gofile_help")]
+                ])
+            
+            await message.reply(account_text, reply_markup=keyboard)
             
         except Exception as e:
-            logger.error(f"Error in account command: {e}")
-            
-    async def stats_command(self, message: types.Message) -> None:
+            logger.error(f"Error in account handler: {e}")
+    
+    async def handle_stats(self, message: Message):
         """Handle /stats command"""
         try:
             if not await self.check_user_permissions(message):
                 return
-                
-            user = await self.db.get_user(message.from_user.id)
-            if not user:
-                await self.bot.reply_to(message, "❌ User not found. Please use /start first.")
+            
+            user_stats = await self.db.get_user_stats(message.from_user.id)
+            
+            if not user_stats:
+                await message.reply("❌ Unable to retrieve your statistics.")
                 return
-                
-            stats = user.get('usage_stats', {})
-            join_date = user.get('join_date', datetime.utcnow()).strftime('%Y-%m-%d')
             
-            files_uploaded = stats.get('files_uploaded', 0)
-            total_size = self.utils.format_file_size(stats.get('total_size', 0))
+            stats_text = f"📊 **Your Statistics**\n\n"
             
-            stats_text = f"""
-📊 **Your Statistics**
-
-👤 **User Info:**
-🆔 ID: `{user['user_id']}`
-📅 Joined: {join_date}
-
-📁 **Upload Stats:**
-📄 Files Uploaded: {files_uploaded}
-💾 Total Size: {total_size}
-"""
+            stats_text += f"👤 **Profile:**\n"
+            stats_text += f"🆔 User ID: `{message.from_user.id}`\n"
+            stats_text += f"📅 Joined: {user_stats.get('join_date', datetime.utcnow()).strftime('%Y-%m-%d')}\n\n"
             
-            await self.bot.reply_to(
-                message,
-                stats_text,
-                parse_mode='Markdown'
-            )
+            stats_text += f"📁 **Upload Stats:**\n"
+            stats_text += f"📄 Files Uploaded: {user_stats.get('files_uploaded', 0)}\n"
+            stats_text += f"💾 Total Size: {self.utils.format_file_size(user_stats.get('total_size', 0))}\n"
+            stats_text += f"📈 Avg File Size: {self.utils.format_file_size(user_stats.get('avg_file_size', 0))}\n\n"
+            
+            stats_text += f"🔗 **Download Stats:**\n"
+            stats_text += f"📥 URLs Downloaded: {user_stats.get('urls_downloaded', 0)}\n"
+            stats_text += f"⏱️ Last Activity: {user_stats.get('last_activity', datetime.utcnow()).strftime('%Y-%m-%d %H:%M')}\n\n"
+            
+            stats_text += f"📊 **Limits:**\n"
+            stats_text += f"📤 Max Upload: {self.config.get_file_size_limit_gb():.1f}GB per file\n"
+            stats_text += f"📥 Max Download: {self.config.get_download_size_limit_gb():.1f}GB per file"
+            
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("📁 My Files", callback_data="user_files"),
+                    InlineKeyboardButton("⚙️ Settings", callback_data="user_settings")
+                ]
+            ])
+            
+            await message.reply(stats_text, reply_markup=keyboard)
             
         except Exception as e:
-            logger.error(f"Error in stats command: {e}")
-            
-    # Admin commands
-    async def admin_command(self, message: types.Message) -> None:
-        """Handle /admin command"""
+            logger.error(f"Error in stats handler: {e}")
+    
+    async def handle_about(self, message: Message):
+        """Handle /about command"""
         try:
-            if not self.config.is_admin(message.from_user.id):
-                await self.bot.reply_to(message, self.config.ERROR_MESSAGES["admin_only"])
-                return
-                
-            bot_stats = await self.db.get_bot_stats()
+            bot_info = self.config.BOT_INFO
             
-            admin_text = f"""
-🛡️ **Admin Panel**
-
-📊 **Bot Statistics:**
-👥 Total Users: {bot_stats.get('total_users', 0)}
-📁 Total Files: {bot_stats.get('total_files', 0)}
-💾 Storage Used: {bot_stats.get('storage_gb', 0)} GB
-
-⚙️ **Available Commands:**
-/stats_admin - Detailed bot statistics
-/users - List all users
-/broadcast <message> - Broadcast to all users
-/ban <user_id> - Ban a user
-/unban <user_id> - Unban a user
-"""
+            about_text = f"ℹ️ **{bot_info['name']}**\n\n"
+            about_text += f"📋 **Description:**\n{bot_info['description']}\n\n"
+            about_text += f"📊 **Version:** {bot_info['version']}\n"
+            about_text += f"👨‍💻 **Developer:** {bot_info['author']}\n\n"
+            about_text += f"✨ **Features:**\n"
+            for feature in bot_info['features']:
+                about_text += f"• {feature}\n"
             
-            await self.bot.reply_to(
-                message,
-                admin_text,
-                parse_mode='Markdown'
-            )
+            about_text += f"\n🔧 **Powered by:**\n"
+            about_text += f"• [Pyrogram](https://pyrogram.org) - Modern Telegram Bot Framework\n"
+            about_text += f"• [yt-dlp](https://github.com/yt-dlp/yt-dlp) - Universal Media Downloader\n"
+            about_text += f"• [GoFile.io](https://gofile.io) - File Hosting Service\n"
+            about_text += f"• MongoDB - Database Storage"
             
-        except Exception as e:
-            logger.error(f"Error in admin command: {e}")
+            platforms = await self.downloader.get_supported_platforms_list()
             
-    async def broadcast_command(self, message: types.Message) -> None:
-        """Handle /broadcast command"""
-        try:
-            if not self.config.is_admin(message.from_user.id):
-                await self.bot.reply_to(message, self.config.ERROR_MESSAGES["admin_only"])
-                return
-                
-            # Extract broadcast message
-            command_parts = message.text.split(maxsplit=1)
-            if len(command_parts) < 2:
-                await self.bot.reply_to(
-                    message,
-                    "📢 Please provide a message to broadcast:\n\n`/broadcast Your message here`",
-                    parse_mode='Markdown'
-                )
-                return
-                
-            broadcast_text = command_parts[1]
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("🚀 Start Using", callback_data="show_help"),
+                    InlineKeyboardButton("📱 Platforms", callback_data="show_platforms")
+                ]
+            ])
             
-            # Get all users
-            all_users = await self.db.get_all_users(limit=1000)
-            
-            success_count = 0
-            
-            # Send status message
-            status_msg = await self.bot.reply_to(
-                message,
-                f"📢 Starting broadcast to {len(all_users)} users..."
-            )
-            
-            # Broadcast to all users
-            for user in all_users:
-                try:
-                    await self.bot.send_message(user['user_id'], broadcast_text)
-                    success_count += 1
-                except Exception as e:
-                    logger.warning(f"Failed to send broadcast to user {user['user_id']}: {e}")
-                    
-                # Small delay to avoid rate limits
-                await asyncio.sleep(0.1)
-                
-            # Final status
-            final_text = self.config.SUCCESS_MESSAGES["broadcast_sent"].format(count=success_count)
-            
-            await self.bot.edit_message_text(
-                final_text,
-                chat_id=status_msg.chat.id,
-                message_id=status_msg.message_id
-            )
+            await message.reply(about_text, reply_markup=keyboard)
             
         except Exception as e:
-            logger.error(f"Error in broadcast command: {e}")
-            
-    async def admin_stats_command(self, message: types.Message) -> None:
-        """Handle /stats_admin command"""
-        try:
-            if not self.config.is_admin(message.from_user.id):
-                await self.bot.reply_to(message, self.config.ERROR_MESSAGES["admin_only"])
-                return
-                
-            stats = await self.db.get_bot_stats()
-            
-            stats_text = f"""
-📊 **Bot Statistics**
-
-👥 **Users:**
-• Total Users: {stats.get('total_users', 0)}
-• Active Users (7d): {stats.get('active_users', 0)}
-
-📁 **Files:**
-• Total Files: {stats.get('total_files', 0)}
-• Total Storage: {stats.get('storage_gb', 0)} GB
-
-⚙️ **System:**
-• Force Subscription: {"Enabled" if self.config.FORCE_SUB_ENABLED else "Disabled"}
-• Max File Size: {self.config.MAX_FILE_SIZE // 1024**2} MB
-"""
-            
-            await self.bot.reply_to(
-                message,
-                stats_text,
-                parse_mode='Markdown'
-            )
-            
-        except Exception as e:
-            logger.error(f"Error in admin stats command: {e}")
-            
-    async def users_command(self, message: types.Message) -> None:
-        """Handle /users command"""
-        try:
-            if not self.config.is_admin(message.from_user.id):
-                await self.bot.reply_to(message, self.config.ERROR_MESSAGES["admin_only"])
-                return
-                
-            users = await self.db.get_all_users(limit=20)
-            
-            if not users:
-                await self.bot.reply_to(message, "📋 No users found.")
-                return
-                
-            users_text = "👥 **Bot Users (First 20):**\n\n"
-            
-            for i, user in enumerate(users, 1):
-                username = user.get('username', 'N/A')
-                first_name = user.get('first_name', 'Unknown')
-                is_banned = user.get('is_banned', False)
-                join_date = user.get('join_date', datetime.utcnow()).strftime('%Y-%m-%d')
-                
-                status = "🚫 Banned" if is_banned else "✅ Active"
-                
-                users_text += f"{i}. **{first_name}** (@{username})\n"
-                users_text += f"   🆔 ID: `{user['user_id']}`\n"
-                users_text += f"   📅 Joined: {join_date}\n"
-                users_text += f"   📊 Status: {status}\n\n"
-                
-            await self.bot.reply_to(
-                message,
-                users_text,
-                parse_mode='Markdown'
-            )
-            
-        except Exception as e:
-            logger.error(f"Error in users command: {e}")
-            
-    async def ban_command(self, message: types.Message) -> None:
-        """Handle /ban command"""
-        try:
-            if not self.config.is_admin(message.from_user.id):
-                await self.bot.reply_to(message, self.config.ERROR_MESSAGES["admin_only"])
-                return
-                
-            # Extract user ID from command
-            command_parts = message.text.split()
-            if len(command_parts) < 2:
-                await self.bot.reply_to(
-                    message,
-                    "🚫 Please provide a user ID to ban:\n\n`/ban 123456789`",
-                    parse_mode='Markdown'
-                )
-                return
-                
-            try:
-                user_id = int(command_parts[1])
-            except ValueError:
-                await self.bot.reply_to(message, "❌ Invalid user ID provided.")
-                return
-                
-            # Ban user
-            success = await self.db.ban_user(user_id, message.from_user.id)
-            
-            if success:
-                success_text = self.config.SUCCESS_MESSAGES["user_banned"].format(user_id=user_id)
-                await self.bot.reply_to(message, success_text)
-            else:
-                await self.bot.reply_to(message, f"❌ Failed to ban user {user_id}.")
-                
-        except Exception as e:
-            logger.error(f"Error in ban command: {e}")
-            
-    async def unban_command(self, message: types.Message) -> None:
-        """Handle /unban command"""
-        try:
-            if not self.config.is_admin(message.from_user.id):
-                await self.bot.reply_to(message, self.config.ERROR_MESSAGES["admin_only"])
-                return
-                
-            # Extract user ID from command
-            command_parts = message.text.split()
-            if len(command_parts) < 2:
-                await self.bot.reply_to(
-                    message,
-                    "✅ Please provide a user ID to unban:\n\n`/unban 123456789`",
-                    parse_mode='Markdown'
-                )
-                return
-                
-            try:
-                user_id = int(command_parts[1])
-            except ValueError:
-                await self.bot.reply_to(message, "❌ Invalid user ID provided.")
-                return
-                
-            # Unban user
-            success = await self.db.unban_user(user_id, message.from_user.id)
-            
-            if success:
-                success_text = self.config.SUCCESS_MESSAGES["user_unbanned"].format(user_id=user_id)
-                await self.bot.reply_to(message, success_text)
-            else:
-                await self.bot.reply_to(message, f"❌ Failed to unban user {user_id}.")
-                
-        except Exception as e:
-            logger.error(f"Error in unban command: {e}")
-            
-    async def force_sub_command(self, message: types.Message) -> None:
-        """Handle /force_sub command"""
-        try:
-            if not self.config.is_admin(message.from_user.id):
-                await self.bot.reply_to(message, self.config.ERROR_MESSAGES["admin_only"])
-                return
-                
-            settings_text = f"""
-⚙️ **Force Subscription Settings**
-
-🔒 **Status:** {"✅ Enabled" if self.config.FORCE_SUB_ENABLED else "❌ Disabled"}
-📢 **Channel:** {self.config.FORCE_SUB_CHANNEL or "Not Set"}
-
-Configure these settings in your .env file:
-- FORCE_SUB_ENABLED=true/false
-- FORCE_SUB_CHANNEL=@your_channel
-"""
-            
-            await self.bot.reply_to(
-                message,
-                settings_text,
-                parse_mode='Markdown'
-            )
-            
-        except Exception as e:
-            logger.error(f"Error in force_sub command: {e}")
-            
-    # File handling
-    async def file_handler(self, message: types.Message) -> None:
-        """Handle file uploads"""
+            logger.error(f"Error in about handler: {e}")
+    
+    # File upload handler
+    async def handle_file_upload(self, message: Message):
+        """Handle file upload to GoFile"""
         try:
             if not await self.check_user_permissions(message):
                 return
-                
-            await self.process_file_upload(message)
             
-        except Exception as e:
-            logger.error(f"Error in file handler: {e}")
-            
-    async def process_file_upload(self, message: types.Message) -> None:
-        """Process file upload to GoFile.io"""
-        try:
-            # Get file info
-            file_info = self.utils.get_file_info(message)
+            # Get file information
+            file_info = await self.utils.get_file_info(message)
             if not file_info:
-                await self.bot.reply_to(message, "❌ Unable to process this file type.")
+                await message.reply("❌ Unable to process this file type.")
                 return
-                
+            
             # Check file size
             if file_info['size'] > self.config.MAX_FILE_SIZE:
-                max_size_mb = self.config.MAX_FILE_SIZE // 1024**2
-                await self.bot.reply_to(
-                    message,
-                    self.config.ERROR_MESSAGES["file_too_large"].format(max_size=max_size_mb)
+                max_size_gb = self.config.get_file_size_limit_gb()
+                current_size_gb = file_info['size'] / (1024**3)
+                
+                await message.reply(
+                    self.config.ERROR_MESSAGES["file_too_large"].format(
+                        max_size=max_size_gb,
+                        file_size=f"{current_size_gb:.2f}GB"
+                    )
                 )
                 return
-                
+            
             # Start upload process
-            status_msg = await self.bot.reply_to(
-                message,
-                f"📤 Uploading {file_info['name']} ({self.utils.format_file_size(file_info['size'])})..."
+            user_id = message.from_user.id
+            
+            # Cancel any existing operation for this user
+            if user_id in self.active_operations:
+                self.active_operations[user_id].cancel()
+            
+            # Create and start upload task
+            upload_task = asyncio.create_task(
+                self._process_file_upload(message, file_info)
+            )
+            self.active_operations[user_id] = upload_task
+            
+            try:
+                await upload_task
+            finally:
+                if user_id in self.active_operations:
+                    del self.active_operations[user_id]
+                
+        except Exception as e:
+            logger.error(f"Error in file upload handler: {e}")
+            await message.reply(self.config.ERROR_MESSAGES["processing_error"])
+    
+    async def _process_file_upload(self, message: Message, file_info: Dict[str, Any]):
+        """Process file upload with progress tracking"""
+        try:
+            # Send initial status
+            status_msg = await message.reply(
+                f"📤 **Starting Upload**\n\n"
+                f"📁 **File:** {file_info['name']}\n"
+                f"📊 **Size:** {self.utils.format_file_size(file_info['size'])}\n"
+                f"🔄 **Status:** Downloading from Telegram..."
             )
             
             # Download file from Telegram
-            file_path = await self.utils.download_telegram_file(self.bot, file_info['file_id'])
+            file_path = await self.utils.download_telegram_file(self.app, file_info['file_id'])
+            
+            # Update status
+            await status_msg.edit_text(
+                f"📤 **Uploading to GoFile**\n\n"
+                f"📁 **File:** {file_info['name']}\n"
+                f"📊 **Size:** {self.utils.format_file_size(file_info['size'])}\n"
+                f"🔄 **Status:** Uploading to GoFile.io..."
+            )
+            
+            # Progress callback
+            last_update = 0
+            async def progress_callback(progress_data):
+                nonlocal last_update
+                current_time = time.time()
+                
+                # Update every 2 seconds to avoid rate limits
+                if current_time - last_update >= 2:
+                    try:
+                        progress = progress_data.get('progress', 0)
+                        speed = progress_data.get('speed', 0)
+                        
+                        await status_msg.edit_text(
+                            f"📤 **Uploading to GoFile** {progress}%\n\n"
+                            f"📁 **File:** {file_info['name']}\n"
+                            f"📊 **Size:** {self.utils.format_file_size(file_info['size'])}\n"
+                            f"⚡ **Speed:** {self.utils.format_file_size(int(speed))}/s\n"
+                            f"📊 **Progress:** {self.utils.create_progress_bar(progress)}"
+                        )
+                        last_update = current_time
+                    except:
+                        pass  # Ignore edit errors
             
             # Upload to GoFile
-            result = await self.utils.upload_to_gofile(file_path, file_info['name'], message.from_user.id)
+            result = await self.utils.upload_to_gofile(
+                file_path, 
+                file_info['name'], 
+                message.from_user.id,
+                progress_callback
+            )
             
             if result['success']:
                 # Save to database
@@ -637,162 +665,694 @@ Configure these settings in your .env file:
                 
                 # Success message
                 success_text = self.config.SUCCESS_MESSAGES["upload_complete"].format(
+                    filename=file_info['name'],
+                    filesize=self.utils.format_file_size(file_info['size']),
                     url=result['download_url']
                 )
                 
-                markup = types.InlineKeyboardMarkup()
-                markup.row(
-                    types.InlineKeyboardButton("📁 Download", url=result['download_url'])
-                )
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📁 Download File", url=result['download_url'])],
+                    [
+                        InlineKeyboardButton("📊 My Files", callback_data="user_files"),
+                        InlineKeyboardButton("📈 Stats", callback_data="user_stats")
+                    ]
+                ])
                 
-                await self.bot.edit_message_text(
-                    success_text,
-                    chat_id=status_msg.chat.id,
-                    message_id=status_msg.message_id,
-                    reply_markup=markup
-                )
+                await status_msg.edit_text(success_text, reply_markup=keyboard)
                 
             else:
-                error_msg = self.config.ERROR_MESSAGES["upload_failed"].format(
+                # Error message
+                error_text = self.config.ERROR_MESSAGES["upload_failed"].format(
                     error=result.get('error', 'Unknown error')
                 )
-                await self.bot.edit_message_text(
-                    error_msg,
-                    chat_id=status_msg.chat.id,
-                    message_id=status_msg.message_id
-                )
                 
-            # Cleanup temp file
+                await status_msg.edit_text(error_text)
+            
+            # Cleanup
             await self.utils.cleanup_file(file_path)
             
+        except asyncio.CancelledError:
+            await message.reply(self.config.ERROR_MESSAGES["operation_cancelled"])
         except Exception as e:
             logger.error(f"Error processing file upload: {e}")
-            await self.bot.reply_to(message, "❌ An error occurred during upload.")
-            
-    async def download_and_upload(self, message: types.Message, url: str) -> None:
-        """Download file from URL and upload to GoFile"""
+            await message.reply(self.config.ERROR_MESSAGES["processing_error"])
+    
+    # URL download handler
+    async def handle_text_message(self, message: Message):
+        """Handle text messages (URLs)"""
         try:
-            status_msg = await self.bot.reply_to(
-                message,
-                f"🔗 Downloading from URL...\n`{url[:50]}...`",
-                parse_mode='Markdown'
+            text = message.text.strip()
+            
+            # Check if it's a URL
+            if self.utils.is_valid_url(text):
+                if await self.check_user_permissions(message):
+                    await self.handle_url_download(message, text)
+            else:
+                # Unknown command
+                await message.reply(
+                    "❌ **Unknown Command**\n\n"
+                    "💡 **Available options:**\n"
+                    "• Send me any file to upload to GoFile.io\n"
+                    "• Send me any URL to download and upload\n"
+                    "• Use /help to see all commands\n\n"
+                    "📊 **Limits:**\n"
+                    "• Max upload: 4GB per file\n"
+                    "• Max download: 2GB per file"
+                )
+                
+        except Exception as e:
+            logger.error(f"Error in text message handler: {e}")
+    
+    async def handle_url_download(self, message: Message, url: str):
+        """Handle URL download and upload"""
+        try:
+            user_id = message.from_user.id
+            
+            # Cancel any existing operation
+            if user_id in self.active_operations:
+                self.active_operations[user_id].cancel()
+            
+            # Check if it's a supported platform for quality selection
+            if self.downloader.is_supported_platform(url):
+                await self._show_quality_selection(message, url)
+            else:
+                # Direct download
+                download_task = asyncio.create_task(
+                    self._process_url_download(message, url)
+                )
+                self.active_operations[user_id] = download_task
+                
+                try:
+                    await download_task
+                finally:
+                    if user_id in self.active_operations:
+                        del self.active_operations[user_id]
+                        
+        except Exception as e:
+            logger.error(f"Error in URL download handler: {e}")
+            await message.reply(self.config.ERROR_MESSAGES["processing_error"])
+    
+    async def _show_quality_selection(self, message: Message, url: str):
+        """Show quality selection for supported platforms"""
+        try:
+            # Get available qualities
+            quality_info = await self.downloader.get_quality_options(url)
+            
+            if not quality_info['success']:
+                # Fallback to direct download
+                await self._process_url_download(message, url)
+                return
+            
+            title = quality_info['title'][:50]
+            duration = quality_info.get('duration', 0)
+            
+            quality_text = f"🎥 **Quality Selection**\n\n"
+            quality_text += f"📺 **Title:** {title}\n"
+            if duration:
+                minutes = duration // 60
+                seconds = duration % 60
+                quality_text += f"⏱️ **Duration:** {minutes}:{seconds:02d}\n"
+            quality_text += f"\n🎯 **Choose quality:**"
+            
+            keyboard = []
+            
+            # Video formats
+            if quality_info.get('has_video'):
+                keyboard.append([InlineKeyboardButton("🎥 Video Formats", callback_data="quality_video")])
+                
+            # Audio formats
+            if quality_info.get('has_audio'):
+                keyboard.append([InlineKeyboardButton("🎵 Audio Only", callback_data="quality_audio")])
+            
+            # Quick options
+            keyboard.extend([
+                [
+                    InlineKeyboardButton("🏆 Best Quality", callback_data=f"download_best:{url}"),
+                    InlineKeyboardButton("💾 Small Size", callback_data=f"download_worst:{url}")
+                ],
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_download")]
+            ])
+            
+            # Store URL for callback
+            await self.db.store_temp_data(message.from_user.id, 'download_url', url)
+            await self.db.store_temp_data(message.from_user.id, 'quality_info', quality_info)
+            
+            await message.reply(
+                quality_text,
+                reply_markup=InlineKeyboardMarkup(keyboard)
             )
+            
+        except Exception as e:
+            logger.error(f"Error showing quality selection: {e}")
+            await self._process_url_download(message, url)
+    
+    async def _process_url_download(
+        self, 
+        message: Message, 
+        url: str, 
+        format_id: Optional[str] = None,
+        extract_audio: bool = False
+    ):
+        """Process URL download with progress tracking"""
+        try:
+            # Send initial status
+            status_msg = await message.reply(
+                f"🔗 **Starting Download**\n\n"
+                f"📥 **URL:** {url[:50]}{'...' if len(url) > 50 else ''}\n"
+                f"🔄 **Status:** Analyzing URL..."
+            )
+            
+            # Progress callback
+            last_update = 0
+            async def progress_callback(progress_data):
+                nonlocal last_update
+                current_time = time.time()
+                
+                if current_time - last_update >= 2:
+                    try:
+                        progress = progress_data.get('progress', 0)
+                        speed = progress_data.get('speed', 0)
+                        eta = progress_data.get('eta', 0)
+                        downloaded = progress_data.get('downloaded', 0)
+                        total = progress_data.get('total', 0)
+                        
+                        status_text = f"📥 **Downloading...** {progress}%\n\n"
+                        status_text += f"📊 **Size:** {self.utils.format_file_size(downloaded)}"
+                        if total:
+                            status_text += f" / {self.utils.format_file_size(total)}"
+                        status_text += f"\n⚡ **Speed:** {self.utils.format_file_size(int(speed))}/s"
+                        if eta:
+                            status_text += f"\n🕒 **ETA:** {int(eta)}s"
+                        status_text += f"\n📊 {self.utils.create_progress_bar(progress)}"
+                        
+                        await status_msg.edit_text(status_text)
+                        last_update = current_time
+                    except:
+                        pass
             
             # Download file
-            downloaded_file = await self.utils.download_from_url(url)
-            
-            if not downloaded_file:
-                await self.bot.edit_message_text(
-                    self.config.ERROR_MESSAGES["download_failed"].format(error="Failed to download file"),
-                    chat_id=status_msg.chat.id,
-                    message_id=status_msg.message_id
-                )
-                return
-                
-            # Upload to GoFile
-            await self.bot.edit_message_text(
-                "📤 Uploading to GoFile.io...",
-                chat_id=status_msg.chat.id,
-                message_id=status_msg.message_id
+            result = await self.downloader.download_from_url(
+                url, format_id, extract_audio, progress_callback
             )
             
-            filename = os.path.basename(downloaded_file)
-            result = await self.utils.upload_to_gofile(downloaded_file, filename, message.from_user.id)
+            if not result['success']:
+                error_text = self.config.ERROR_MESSAGES["download_failed"].format(
+                    error=result.get('error', 'Unknown error')
+                )
+                await status_msg.edit_text(error_text)
+                return
             
-            if result['success']:
+            # Update status for upload
+            await status_msg.edit_text(
+                f"📤 **Uploading to GoFile**\n\n"
+                f"📁 **File:** {result['filename']}\n"
+                f"📊 **Size:** {self.utils.format_file_size(result['filesize'])}\n"
+                f"🔄 **Status:** Uploading..."
+            )
+            
+            # Upload progress callback
+            async def upload_progress_callback(progress_data):
+                nonlocal last_update
+                current_time = time.time()
+                
+                if current_time - last_update >= 2:
+                    try:
+                        progress = progress_data.get('progress', 0)
+                        speed = progress_data.get('speed', 0)
+                        
+                        await status_msg.edit_text(
+                            f"📤 **Uploading to GoFile** {progress}%\n\n"
+                            f"📁 **File:** {result['filename']}\n"
+                            f"📊 **Size:** {self.utils.format_file_size(result['filesize'])}\n"
+                            f"⚡ **Speed:** {self.utils.format_file_size(int(speed))}/s\n"
+                            f"📊 {self.utils.create_progress_bar(progress)}"
+                        )
+                        last_update = current_time
+                    except:
+                        pass
+            
+            # Upload to GoFile
+            upload_result = await self.utils.upload_to_gofile(
+                result['filepath'],
+                result['filename'],
+                message.from_user.id,
+                upload_progress_callback
+            )
+            
+            if upload_result['success']:
                 # Save to database
-                file_size = os.path.getsize(downloaded_file)
                 await self.db.save_file({
                     'user_id': message.from_user.id,
-                    'file_name': filename,
-                    'file_size': file_size,
+                    'file_name': result['filename'],
+                    'file_size': result['filesize'],
                     'file_type': 'download',
-                    'gofile_id': result['file_id'],
-                    'gofile_url': result['download_url']
+                    'gofile_id': upload_result['file_id'],
+                    'gofile_url': upload_result['download_url'],
+                    'source_url': url
                 })
                 
                 # Success message
                 success_text = self.config.SUCCESS_MESSAGES["download_complete"].format(
-                    url=result['download_url']
+                    filename=result['filename'],
+                    filesize=self.utils.format_file_size(result['filesize']),
+                    url=upload_result['download_url']
                 )
                 
-                markup = types.InlineKeyboardMarkup()
-                markup.row(
-                    types.InlineKeyboardButton("📁 Download", url=result['download_url'])
-                )
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📁 Download File", url=upload_result['download_url'])],
+                    [
+                        InlineKeyboardButton("📊 My Files", callback_data="user_files"),
+                        InlineKeyboardButton("🔄 Download Another", callback_data="help_download")
+                    ]
+                ])
                 
-                await self.bot.edit_message_text(
-                    success_text,
-                    chat_id=status_msg.chat.id,
-                    message_id=status_msg.message_id,
-                    reply_markup=markup
-                )
+                await status_msg.edit_text(success_text, reply_markup=keyboard)
                 
             else:
-                error_msg = self.config.ERROR_MESSAGES["upload_failed"].format(
-                    error=result.get('error', 'Unknown error')
+                # Upload error
+                error_text = self.config.ERROR_MESSAGES["upload_failed"].format(
+                    error=upload_result.get('error', 'Unknown error')
                 )
-                await self.bot.edit_message_text(
-                    error_msg,
-                    chat_id=status_msg.chat.id,
-                    message_id=status_msg.message_id
-                )
-                
+                await status_msg.edit_text(error_text)
+            
             # Cleanup
-            await self.utils.cleanup_file(downloaded_file)
+            await self.utils.cleanup_file(result['filepath'])
+            
+        except asyncio.CancelledError:
+            await message.reply(self.config.ERROR_MESSAGES["operation_cancelled"])
+        except Exception as e:
+            logger.error(f"Error processing URL download: {e}")
+            await message.reply(self.config.ERROR_MESSAGES["processing_error"])
+    
+    # Admin handlers
+    async def handle_admin(self, message: Message):
+        """Handle /admin command"""
+        try:
+            if not self.config.is_admin(message.from_user.id):
+                await message.reply(self.config.ERROR_MESSAGES["admin_only"])
+                return
+            
+            stats = await self.db.get_bot_stats()
+            
+            admin_text = f"🛡️ **Admin Panel**\n\n"
+            admin_text += f"📊 **Bot Statistics:**\n"
+            admin_text += f"👥 Total Users: {stats.get('total_users', 0)}\n"
+            admin_text += f"🟢 Active (7d): {stats.get('active_users', 0)}\n"
+            admin_text += f"📁 Total Files: {stats.get('total_files', 0)}\n"
+            admin_text += f"💾 Storage: {stats.get('storage_gb', 0):.2f} GB\n\n"
+            
+            admin_text += f"⚙️ **System Info:**\n"
+            admin_text += f"📤 Max Upload: {self.config.get_file_size_limit_gb():.1f}GB\n"
+            admin_text += f"📥 Max Download: {self.config.get_download_size_limit_gb():.1f}GB\n"
+            admin_text += f"🔒 Force Sub: {'✅' if self.config.FORCE_SUB_ENABLED else '❌'}\n"
+            admin_text += f"🎥 yt-dlp: {'✅' if self.config.YTDLP_ENABLED else '❌'}"
+            
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("👥 Users", callback_data="admin_users"),
+                    InlineKeyboardButton("📊 Stats", callback_data="admin_stats")
+                ],
+                [
+                    InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"),
+                    InlineKeyboardButton("⚙️ Settings", callback_data="admin_settings")
+                ],
+                [
+                    InlineKeyboardButton("🔒 Force Sub", callback_data="admin_forcesub"),
+                    InlineKeyboardButton("📋 Logs", callback_data="admin_logs")
+                ]
+            ])
+            
+            await message.reply(admin_text, reply_markup=keyboard)
             
         except Exception as e:
-            logger.error(f"Error in download and upload: {e}")
-            await self.bot.reply_to(message, "❌ An error occurred during download and upload.")
-            
-    # Callback query handler
-    async def callback_handler(self, call: types.CallbackQuery) -> None:
-        """Handle callback queries from inline keyboards"""
+            logger.error(f"Error in admin handler: {e}")
+    
+    async def handle_broadcast(self, message: Message):
+        """Handle /broadcast command"""
         try:
-            await self.bot.answer_callback_query(call.id)
+            if not self.config.is_admin(message.from_user.id):
+                await message.reply(self.config.ERROR_MESSAGES["admin_only"])
+                return
             
-            data = call.data
-            
-            if data == "check_subscription":
-                if await self.check_subscription(call.from_user.id):
-                    await self.db.update_user(call.from_user.id, {"subscription_status": True})
-                    await self.bot.edit_message_text(
-                        "✅ Subscription verified! You can now use the bot.",
-                        chat_id=call.message.chat.id,
-                        message_id=call.message.message_id
-                    )
-                else:
-                    await self.bot.edit_message_text(
-                        "❌ Please join the channel first and then click 'I've Joined'.",
-                        chat_id=call.message.chat.id,
-                        message_id=call.message.message_id
-                    )
-                    
-            elif data == "settings":
-                await self.settings_command(call.message)
-                
-            elif data == "stats":
-                await self.stats_command(call.message)
-                
-            elif data == "help":
-                await self.help_command(call.message)
-                
-        except Exception as e:
-            logger.error(f"Error in callback handler: {e}")
-            
-    async def text_handler(self, message: types.Message) -> None:
-        """Handle text messages"""
-        try:
-            # Check if it's a URL
-            if self.utils.is_valid_url(message.text):
-                if await self.check_user_permissions(message):
-                    await self.download_and_upload(message, message.text.strip())
-            else:
-                # Unknown command
-                await self.bot.reply_to(
-                    message,
-                    self.config.ERROR_MESSAGES["invalid_command"]
+            # Extract message
+            command_parts = message.text.split(maxsplit=1)
+            if len(command_parts) < 2:
+                await message.reply(
+                    "📢 **Broadcast Message**\n\n"
+                    "**Usage:** `/broadcast <message>`\n\n"
+                    "**Example:**\n"
+                    "`/broadcast Hello everyone! 👋`\n\n"
+                    "⚠️ **Warning:** This sends to ALL users!"
                 )
+                return
+            
+            broadcast_text = command_parts[1]
+            
+            # Get all users
+            all_users = await self.db.get_all_users(limit=10000)
+            
+            if not all_users:
+                await message.reply("📋 No users found to broadcast to.")
+                return
+            
+            # Confirmation
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✅ Confirm Broadcast", callback_data=f"broadcast_confirm"),
+                    InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel")
+                ]
+            ])
+            
+            # Store broadcast data
+            await self.db.store_temp_data(message.from_user.id, 'broadcast_text', broadcast_text)
+            await self.db.store_temp_data(message.from_user.id, 'broadcast_users', all_users)
+            
+            await message.reply(
+                f"📢 **Confirm Broadcast**\n\n"
+                f"📝 **Message:**\n{broadcast_text}\n\n"
+                f"👥 **Recipients:** {len(all_users)} users\n\n"
+                f"❗ **Are you sure?**",
+                reply_markup=keyboard
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in broadcast handler: {e}")
+    
+    async def handle_users_list(self, message: Message):
+        """Handle /users command"""
+        try:
+            if not self.config.is_admin(message.from_user.id):
+                await message.reply(self.config.ERROR_MESSAGES["admin_only"])
+                return
+            
+            users = await self.db.get_all_users(limit=25)
+            
+            if not users:
+                await message.reply("📋 No users found.")
+                return
+            
+            users_text = "👥 **Bot Users (Recent 25):**\n\n"
+            
+            for i, user in enumerate(users, 1):
+                username = user.get('username', 'N/A')
+                name = user.get('first_name', 'Unknown')
+                banned = user.get('is_banned', False)
+                files = user.get('usage_stats', {}).get('files_uploaded', 0)
+                join_date = user.get('join_date', datetime.utcnow()).strftime('%m/%d')
+                
+                status = "🚫" if banned else "✅"
+                
+                users_text += f"{i}. {status} **{name}** (@{username})\n"
+                users_text += f"   🆔 `{user['user_id']}` • 📁 {files} files • 📅 {join_date}\n\n"
+            
+            total_users = await self.db.get_users_count()
+            users_text += f"📊 **Total Users:** {total_users}"
+            
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("🔄 Refresh", callback_data="admin_users"),
+                    InlineKeyboardButton("📊 Detailed Stats", callback_data="admin_stats")
+                ]
+            ])
+            
+            await message.reply(users_text, reply_markup=keyboard)
+            
+        except Exception as e:
+            logger.error(f"Error in users list handler: {e}")
+    
+    async def handle_ban_user(self, message: Message):
+        """Handle /ban command"""
+        try:
+            if not self.config.is_admin(message.from_user.id):
+                await message.reply(self.config.ERROR_MESSAGES["admin_only"])
+                return
+            
+            command_parts = message.text.split()
+            if len(command_parts) < 2:
+                await message.reply(
+                    "🚫 **Ban User**\n\n"
+                    "**Usage:** `/ban <user_id> [reason]`\n\n"
+                    "**Example:**\n"
+                    "`/ban 123456789 Spam`"
+                )
+                return
+            
+            try:
+                user_id = int(command_parts[1])
+            except ValueError:
+                await message.reply("❌ Invalid user ID.")
+                return
+            
+            reason = " ".join(command_parts[2:]) if len(command_parts) > 2 else "No reason"
+            
+            # Check if user exists
+            user = await self.db.get_user(user_id)
+            if not user:
+                await message.reply(f"❌ User {user_id} not found.")
+                return
+            
+            # Ban user
+            success = await self.db.ban_user(user_id, message.from_user.id, reason)
+            
+            if success:
+                await message.reply(
+                    f"✅ **User Banned**\n\n"
+                    f"🆔 **User:** {user_id}\n"
+                    f"👤 **Name:** {user.get('first_name', 'Unknown')}\n"
+                    f"📝 **Reason:** {reason}"
+                )
+            else:
+                await message.reply(f"❌ Failed to ban user {user_id}.")
                 
         except Exception as e:
-            logger.error(f"Error in text handler: {e}")
+            logger.error(f"Error in ban user handler: {e}")
+    
+    async def handle_unban_user(self, message: Message):
+        """Handle /unban command"""
+        try:
+            if not self.config.is_admin(message.from_user.id):
+                await message.reply(self.config.ERROR_MESSAGES["admin_only"])
+                return
+            
+            command_parts = message.text.split()
+            if len(command_parts) < 2:
+                await message.reply(
+                    "✅ **Unban User**\n\n"
+                    "**Usage:** `/unban <user_id>`\n\n"
+                    "**Example:**\n"
+                    "`/unban 123456789`"
+                )
+                return
+            
+            try:
+                user_id = int(command_parts[1])
+            except ValueError:
+                await message.reply("❌ Invalid user ID.")
+                return
+            
+            # Unban user
+            success = await self.db.unban_user(user_id, message.from_user.id)
+            
+            if success:
+                await message.reply(
+                    f"✅ **User Unbanned**\n\n"
+                    f"🆔 **User:** {user_id}\n"
+                    f"📅 **Can now use the bot again**"
+                )
+            else:
+                await message.reply(f"❌ Failed to unban user {user_id}.")
+                
+        except Exception as e:
+            logger.error(f"Error in unban user handler: {e}")
+    
+    async def handle_admin_stats(self, message: Message):
+        """Handle /stats_admin command"""
+        try:
+            if not self.config.is_admin(message.from_user.id):
+                await message.reply(self.config.ERROR_MESSAGES["admin_only"])
+                return
+            
+            stats = await self.db.get_detailed_stats()
+            
+            stats_text = f"📊 **Detailed Bot Statistics**\n\n"
+            
+            stats_text += f"👥 **Users:**\n"
+            stats_text += f"• Total: {stats.get('total_users', 0)}\n"
+            stats_text += f"• Active (7d): {stats.get('active_users', 0)}\n"
+            stats_text += f"• Active (30d): {stats.get('monthly_active', 0)}\n"
+            stats_text += f"• Banned: {stats.get('banned_users', 0)}\n\n"
+            
+            stats_text += f"📁 **Files:**\n"
+            stats_text += f"• Total: {stats.get('total_files', 0)}\n"
+            stats_text += f"• Today: {stats.get('files_today', 0)}\n"
+            stats_text += f"• This Week: {stats.get('files_week', 0)}\n"
+            stats_text += f"• Storage: {stats.get('storage_gb', 0):.2f} GB\n\n"
+            
+            stats_text += f"📥 **Downloads:**\n"
+            stats_text += f"• Total URLs: {stats.get('total_downloads', 0)}\n"
+            stats_text += f"• Success Rate: {stats.get('success_rate', 0):.1f}%\n"
+            stats_text += f"• Popular Platforms: {', '.join(stats.get('top_platforms', [])[:3])}\n\n"
+            
+            stats_text += f"⚙️ **System:**\n"
+            stats_text += f"• Uptime: {stats.get('uptime', 'Unknown')}\n"
+            stats_text += f"• Version: {self.config.BOT_INFO['version']}\n"
+            stats_text += f"• yt-dlp: {'✅' if self.config.YTDLP_ENABLED else '❌'}"
+            
+            await message.reply(stats_text)
+            
+        except Exception as e:
+            logger.error(f"Error in admin stats handler: {e}")
+    
+    async def handle_force_sub_settings(self, message: Message):
+        """Handle /force_sub command"""
+        try:
+            if not self.config.is_admin(message.from_user.id):
+                await message.reply(self.config.ERROR_MESSAGES["admin_only"])
+                return
+            
+            settings_text = f"🔒 **Force Subscription Settings**\n\n"
+            settings_text += f"**Status:** {'✅ Enabled' if self.config.FORCE_SUB_ENABLED else '❌ Disabled'}\n"
+            settings_text += f"**Channel:** {self.config.FORCE_SUB_CHANNEL or 'Not Set'}\n\n"
+            
+            if self.config.FORCE_SUB_ENABLED and self.config.FORCE_SUB_CHANNEL:
+                try:
+                    chat = await self.app.get_chat(self.config.FORCE_SUB_CHANNEL)
+                    settings_text += f"✅ **Channel Info:**\n"
+                    settings_text += f"• Name: {chat.title}\n"
+                    settings_text += f"• Members: {chat.members_count or 'Unknown'}\n"
+                    settings_text += f"• Type: {chat.type}\n\n"
+                except Exception as e:
+                    settings_text += f"❌ **Channel Error:** {str(e)}\n\n"
+            
+            settings_text += f"⚙️ **Configuration:**\n"
+            settings_text += f"These settings are in your `.env` file:\n"
+            settings_text += f"```\n"
+            settings_text += f"FORCE_SUB_ENABLED={self.config.FORCE_SUB_ENABLED}\n"
+            settings_text += f"FORCE_SUB_CHANNEL={self.config.FORCE_SUB_CHANNEL}\n"
+            settings_text += f"```\n\n"
+            settings_text += f"**Note:** Restart bot after changes."
+            
+            await message.reply(settings_text)
+            
+        except Exception as e:
+            logger.error(f"Error in force sub settings: {e}")
+    
+    # Callback query handler
+    async def handle_callback_query(self, callback_query: CallbackQuery):
+        """Handle all callback queries"""
+        try:
+            await callback_query.answer()
+            
+            data = callback_query.data
+            user_id = callback_query.from_user.id
+            message = callback_query.message
+            
+            # Handle different callback types
+            if data == "check_subscription":
+                await self._handle_subscription_check(callback_query)
+            elif data.startswith("download_"):
+                await self._handle_download_callback(callback_query)
+            elif data.startswith("quality_"):
+                await self._handle_quality_callback(callback_query)
+            elif data.startswith("settings_"):
+                await self._handle_settings_callback(callback_query)
+            elif data.startswith("admin_"):
+                await self._handle_admin_callback(callback_query)
+            elif data in ["user_files", "user_stats", "user_settings"]:
+                await self._handle_user_callback(callback_query)
+            elif data in ["show_help", "show_about", "show_platforms"]:
+                await self._handle_info_callback(callback_query)
+            else:
+                await callback_query.answer("❌ Unknown action", show_alert=True)
+                
+        except Exception as e:
+            logger.error(f"Error in callback query handler: {e}")
+            await callback_query.answer("❌ An error occurred", show_alert=True)
+    
+    async def _handle_subscription_check(self, callback_query: CallbackQuery):
+        """Handle subscription check callback"""
+        if await self.check_subscription(callback_query.from_user.id):
+            await self.db.update_user(callback_query.from_user.id, {"subscription_status": True})
+            await callback_query.message.edit_text(
+                "✅ **Subscription Verified!**\n\n"
+                "Welcome to GoFile Uploader Bot! 🎉\n\n"
+                "🚀 **Get Started:**\n"
+                "• Send me any file to upload to GoFile.io\n"
+                "• Send any URL to download and upload\n"
+                "• Use /help for all commands"
+            )
+        else:
+            await callback_query.message.edit_text(
+                "❌ **Subscription Not Found**\n\n"
+                "Please join the channel first, then try again.\n\n"
+                "If you're having issues, contact an administrator."
+            )
+    
+    async def _handle_download_callback(self, callback_query: CallbackQuery):
+        """Handle download-related callbacks"""
+        data = callback_query.data
+        
+        if data.startswith("download_best:"):
+            url = data.replace("download_best:", "")
+            await self._process_url_download(callback_query.message, url, format_id="best")
+        elif data.startswith("download_worst:"):
+            url = data.replace("download_worst:", "")
+            await self._process_url_download(callback_query.message, url, format_id="worst")
+        elif data == "cancel_download":
+            user_id = callback_query.from_user.id
+            if user_id in self.active_operations:
+                self.active_operations[user_id].cancel()
+                del self.active_operations[user_id]
+            await callback_query.message.edit_text("❌ Download cancelled.")
+    
+    async def _handle_quality_callback(self, callback_query: CallbackQuery):
+        """Handle quality selection callbacks"""
+        # Implement quality selection interface
+        await callback_query.answer("🔧 Quality selection coming soon!", show_alert=True)
+    
+    async def _handle_settings_callback(self, callback_query: CallbackQuery):
+        """Handle settings callbacks"""
+        await callback_query.answer("⚙️ Settings panel coming soon!", show_alert=True)
+    
+    async def _handle_admin_callback(self, callback_query: CallbackQuery):
+        """Handle admin callbacks"""
+        if not self.config.is_admin(callback_query.from_user.id):
+            await callback_query.answer("🔒 Admin access required", show_alert=True)
+            return
+            
+        await callback_query.answer("🛡️ Admin features coming soon!", show_alert=True)
+    
+    async def _handle_user_callback(self, callback_query: CallbackQuery):
+        """Handle user-related callbacks"""
+        data = callback_query.data
+        
+        if data == "user_files":
+            # Create fake message to reuse myfiles handler
+            fake_msg = callback_query.message
+            fake_msg.from_user = callback_query.from_user
+            await self.handle_myfiles(fake_msg)
+        elif data == "user_stats":
+            fake_msg = callback_query.message  
+            fake_msg.from_user = callback_query.from_user
+            await self.handle_stats(fake_msg)
+        elif data == "user_settings":
+            fake_msg = callback_query.message
+            fake_msg.from_user = callback_query.from_user  
+            await self.handle_settings(fake_msg)
+    
+    async def _handle_info_callback(self, callback_query: CallbackQuery):
+        """Handle info callbacks"""
+        data = callback_query.data
+        
+        if data == "show_help":
+            fake_msg = callback_query.message
+            fake_msg.from_user = callback_query.from_user
+            await self.handle_help(fake_msg)
+        elif data == "show_about":
+            fake_msg = callback_query.message
+            fake_msg.from_user = callback_query.from_user
+            await self.handle_about(fake_msg)
+        elif data == "show_platforms":
+            platforms = await self.downloader.get_supported_platforms_list()
+            platforms_text = "📱 **Supported Platforms:**\n\n" + "\n".join(platforms)
+            await callback_query.message.edit_text(platforms_text)
