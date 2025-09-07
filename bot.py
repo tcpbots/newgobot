@@ -1,82 +1,165 @@
 #!/usr/bin/env python3
 """
-GoFile Uploader Telegram Bot - Main Entry Point
+GoFile Uploader Bot - Main Entry Point (COMPLETE REWRITE with Pyrogram)
 """
 
 import asyncio
 import logging
 import sys
-from telebot.async_telebot import AsyncTeleBot
+import signal
+from pathlib import Path
+
+from pyrogram import Client
+from pyrogram.errors import ApiIdInvalid, ApiIdPublishedFlood, AccessTokenInvalid
+
 from config import Config
 from database import Database
 from handlers import BotHandlers
 from utils import Utils
+from downloader import MediaDownloader
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('bot.log'),
+        logging.FileHandler('logs/bot.log'),
         logging.StreamHandler(sys.stdout)
     ]
 )
 
 logger = logging.getLogger(__name__)
 
-
 class GoFileBot:
+    """Main bot class using Pyrogram"""
+    
     def __init__(self):
         self.config = Config()
-        self.bot = AsyncTeleBot(self.config.BOT_TOKEN)
+        
+        # Initialize Pyrogram client
+        self.app = Client(
+            "gofile_bot",
+            api_id=self.config.API_ID,
+            api_hash=self.config.API_HASH,
+            bot_token=self.config.BOT_TOKEN,
+            workdir="./session"
+        )
+        
+        # Initialize components
         self.database = Database()
         self.utils = Utils(self.config, self.database)
-        self.handlers = BotHandlers(self.bot, self.database, self.utils, self.config)
+        self.downloader = MediaDownloader(self.config, self.utils)
+        self.handlers = BotHandlers(self.app, self.database, self.utils, self.downloader, self.config)
         
-    async def initialize(self):
-        """Initialize all components"""
+        self.is_running = False
+        
+    async def initialize(self) -> bool:
+        """Initialize all bot components"""
         try:
-            logger.info("Initializing GoFile Uploader Bot...")
+            logger.info("🚀 Starting GoFile Uploader Bot...")
+            
+            # Validate configuration
+            self.config.validate_config()
+            logger.info("✅ Configuration validated")
             
             # Initialize database
             await self.database.initialize()
-            logger.info("Database initialized")
+            logger.info("✅ Database connected")
+            
+            # Test bot credentials
+            await self.app.start()
+            bot_info = await self.app.get_me()
+            logger.info(f"✅ Bot authenticated: @{bot_info.username} ({bot_info.first_name})")
             
             # Setup handlers
-            self.handlers.setup_handlers()
-            logger.info("Handlers set up")
+            await self.handlers.setup_handlers()
+            logger.info("✅ Handlers configured")
             
-            # Test bot
-            bot_info = await self.bot.get_me()
-            logger.info(f"Bot @{bot_info.username} is ready!")
+            self.is_running = True
+            logger.info(f"🎉 Bot {bot_info.first_name} is ready!")
             
             return True
             
+        except ApiIdInvalid:
+            logger.error("❌ Invalid API_ID provided")
+            return False
+        except AccessTokenInvalid:
+            logger.error("❌ Invalid BOT_TOKEN provided")
+            return False
         except Exception as e:
-            logger.error(f"Initialization failed: {e}")
+            logger.error(f"❌ Initialization failed: {e}")
             return False
     
     async def start(self):
         """Start the bot"""
-        if await self.initialize():
-            logger.info("Starting bot polling...")
+        if not await self.initialize():
+            logger.error("❌ Failed to initialize bot")
+            return
+            
+        try:
+            logger.info("🔄 Bot is now running...")
+            
+            # Setup signal handlers for graceful shutdown
+            def signal_handler(signum, frame):
+                logger.info(f"📡 Received signal {signum}, shutting down...")
+                asyncio.create_task(self.stop())
+            
+            signal.signal(signal.SIGINT, signal_handler)
+            signal.signal(signal.SIGTERM, signal_handler)
+            
+            # Keep the bot running
+            await self.app.idle()
+            
+        except KeyboardInterrupt:
+            logger.info("⌨️ Keyboard interrupt received")
+        except Exception as e:
+            logger.error(f"❌ Runtime error: {e}")
+        finally:
+            await self.stop()
+    
+    async def stop(self):
+        """Stop the bot gracefully"""
+        if self.is_running:
+            logger.info("🛑 Stopping bot...")
+            self.is_running = False
+            
             try:
-                await self.bot.polling(non_stop=True, interval=0)
+                # Stop pyrogram client
+                if self.app.is_connected:
+                    await self.app.stop()
+                    
+                # Close database connection
+                await self.database.close()
+                
+                # Cleanup temporary files
+                await self.utils.cleanup_temp_files()
+                
+                logger.info("✅ Bot stopped successfully")
+                
             except Exception as e:
-                logger.error(f"Polling error: {e}")
-        else:
-            logger.error("Failed to initialize bot")
+                logger.error(f"❌ Error during shutdown: {e}")
 
 
 async def main():
+    """Main entry point"""
+    # Create session directory
+    Path("session").mkdir(exist_ok=True)
+    Path("logs").mkdir(exist_ok=True)
+    
     bot = GoFileBot()
+    
     try:
         await bot.start()
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
     except Exception as e:
-        logger.error(f"Bot error: {e}")
+        logger.error(f"❌ Fatal error: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("🛑 Bot stopped by user")
+    except Exception as e:
+        logger.error(f"💥 Bot crashed: {e}")
+        sys.exit(1)
