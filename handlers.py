@@ -1,5 +1,5 @@
 """
-Bot handlers using Pyrogram - COMPLETE REWRITE
+Complete Bot handlers using Pyrogram - ALL FUNCTIONS INCLUDED
 """
 
 import asyncio
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class BotHandlers:
-    """Bot handlers using Pyrogram"""
+    """Complete Bot handlers using Pyrogram"""
     
     def __init__(self, app: Client, database: Database, utils: Utils, downloader: MediaDownloader, config: Config):
         self.app = app
@@ -535,8 +535,6 @@ class BotHandlers:
             about_text += f"• [yt-dlp](https://github.com/yt-dlp/yt-dlp) - Universal Media Downloader\n"
             about_text += f"• [GoFile.io](https://gofile.io) - File Hosting Service\n"
             about_text += f"• MongoDB - Database Storage"
-            
-            platforms = await self.downloader.get_supported_platforms_list()
             
             keyboard = InlineKeyboardMarkup([
                 [
