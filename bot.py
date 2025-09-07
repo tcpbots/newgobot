@@ -7,6 +7,7 @@ import asyncio
 import logging
 import sys
 import signal
+import os
 from pathlib import Path
 
 from pyrogram import Client
@@ -17,6 +18,12 @@ from database import Database
 from handlers import BotHandlers
 from utils import Utils
 from downloader import MediaDownloader
+
+# Create required directories first
+Path("logs").mkdir(exist_ok=True)
+Path("session").mkdir(exist_ok=True)
+Path("downloads").mkdir(exist_ok=True)
+Path("temp").mkdir(exist_ok=True)
 
 # Configure logging
 logging.basicConfig(
@@ -81,10 +88,13 @@ class GoFileBot:
             return True
             
         except ApiIdInvalid:
-            logger.error("❌ Invalid API_ID provided")
+            logger.error("❌ Invalid API_ID provided. Get it from https://my.telegram.org")
             return False
         except AccessTokenInvalid:
-            logger.error("❌ Invalid BOT_TOKEN provided")
+            logger.error("❌ Invalid BOT_TOKEN provided. Get it from @BotFather")
+            return False
+        except ValueError as e:
+            logger.error(f"❌ Configuration error: {e}")
             return False
         except Exception as e:
             logger.error(f"❌ Initialization failed: {e}")
@@ -142,9 +152,14 @@ class GoFileBot:
 
 async def main():
     """Main entry point"""
-    # Create session directory
-    Path("session").mkdir(exist_ok=True)
-    Path("logs").mkdir(exist_ok=True)
+    # Show startup banner
+    print("🤖 GoFile Uploader Bot v2.0")
+    print("=" * 40)
+    
+    # Check Python version
+    if sys.version_info < (3, 7):
+        print("❌ Python 3.7+ required")
+        sys.exit(1)
     
     bot = GoFileBot()
     
