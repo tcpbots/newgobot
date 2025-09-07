@@ -1,0 +1,96 @@
+# GoFile Uploader Bot Configuration - COMPLETE SETUP
+# Copy this file to .env and fill in your values
+
+# ================================
+# REQUIRED CREDENTIALS
+# ================================
+
+# Get from @BotFather on Telegram
+BOT_TOKEN=your_bot_token_here
+
+# Get from https://my.telegram.org (REQUIRED for Pyrogram)
+API_ID=your_api_id_here
+API_HASH=your_api_hash_here
+
+# Your Telegram User ID (will be admin)
+ADMIN_IDS=your_user_id_here
+
+# ================================
+# DATABASE CONFIGURATION
+# ================================
+
+# MongoDB connection string
+MONGO_URI=mongodb://localhost:27017/
+DATABASE_NAME=gofile_bot
+
+# ================================
+# FORCE SUBSCRIPTION (Optional)
+# ================================
+
+# Enable/disable force subscription
+FORCE_SUB_ENABLED=false
+
+# Channel username (with or without @)
+FORCE_SUB_CHANNEL=@your_channel_username
+
+# ================================
+# FILE & DOWNLOAD LIMITS
+# ================================
+
+# Maximum file upload size (4GB = 4294967296 bytes)
+MAX_FILE_SIZE=4294967296
+
+# Maximum download size (2GB = 2147483648 bytes)  
+MAX_DOWNLOAD_SIZE=2147483648
+
+# ================================
+# DIRECTORIES
+# ================================
+
+# Download directory
+DOWNLOAD_DIR=./downloads
+
+# Temporary files directory
+TEMP_DIR=./temp
+
+# ================================
+# GOFILE.IO CONFIGURATION
+# ================================
+
+# Optional: GoFile.io API token for authenticated uploads
+GOFILE_API_TOKEN=
+
+# ================================
+# YT-DLP SETTINGS
+# ================================
+
+# Enable yt-dlp for media downloads
+YTDLP_ENABLED=true
+
+# Extract audio from videos by default
+YTDLP_EXTRACT_AUDIO=false
+
+# Default audio format
+YTDLP_AUDIO_FORMAT=mp3
+
+# Default video format with size limit
+YTDLP_VIDEO_FORMAT=best[filesize<2147483648]
+
+# ================================
+# PERFORMANCE SETTINGS
+# ================================
+
+# Maximum concurrent uploads
+MAX_CONCURRENT_UPLOADS=3
+
+# Maximum concurrent downloads
+MAX_CONCURRENT_DOWNLOADS=2
+
+# Chunk size for file operations (1MB = 1048576)
+CHUNK_SIZE=1048576
+
+# Request timeout (seconds)
+REQUEST_TIMEOUT=60
+
+# Download timeout (seconds) - 30 minutes
+DOWNLOAD_TIMEOUT=1800
