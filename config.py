@@ -34,7 +34,7 @@ class Config:
     ]
     
     # Force subscription settings
-    FORCE_SUB_CHANNEL: Optional[str] = os.getenv("FORCE_SUB_CHANNEL")
+    FORCE_SUB_CHANNEL: Optional[str] = os.getenv("FORCE_SUB_CHANNEL, "@xtreambotz")
     FORCE_SUB_ENABLED: bool = os.getenv("FORCE_SUB_ENABLED", "true").lower() == "true"
     
     # GoFile.io API settings
