@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-GoFile Uploader Bot - Main Entry Point (COMPLETE REWRITE with Pyrogram)
+GoFile Uploader Bot - Main Entry Point (FIXED for Pyrogram 2.0)
 """
 
 import asyncio
@@ -10,7 +10,7 @@ import signal
 import os
 from pathlib import Path
 
-from pyrogram import Client
+from pyrogram import Client, idle
 from pyrogram.errors import ApiIdInvalid, ApiIdPublishedFlood, AccessTokenInvalid
 
 from config import Config
@@ -108,17 +108,11 @@ class GoFileBot:
             
         try:
             logger.info("🔄 Bot is now running...")
+            logger.info("📱 Send /start to your bot to test it!")
+            logger.info("🛑 Press Ctrl+C to stop the bot")
             
-            # Setup signal handlers for graceful shutdown
-            def signal_handler(signum, frame):
-                logger.info(f"📡 Received signal {signum}, shutting down...")
-                asyncio.create_task(self.stop())
-            
-            signal.signal(signal.SIGINT, signal_handler)
-            signal.signal(signal.SIGTERM, signal_handler)
-            
-            # Keep the bot running
-            await self.app.idle()
+            # Keep the bot running using Pyrogram's idle function
+            await idle()
             
         except KeyboardInterrupt:
             logger.info("⌨️ Keyboard interrupt received")
@@ -155,18 +149,34 @@ async def main():
     # Show startup banner
     print("🤖 GoFile Uploader Bot v2.0")
     print("=" * 40)
+    print("🔧 Pyrogram-based with 4GB file support")
+    print("📥 yt-dlp integration for media downloads")  
+    print("🔗 GoFile.io integration")
+    print("=" * 40)
     
     # Check Python version
     if sys.version_info < (3, 7):
         print("❌ Python 3.7+ required")
         sys.exit(1)
     
+    # Check if .env file exists
+    if not os.path.exists('.env'):
+        print("❌ .env file not found!")
+        print("📝 Create a .env file with:")
+        print("   BOT_TOKEN=your_bot_token")
+        print("   API_ID=your_api_id")
+        print("   API_HASH=your_api_hash")
+        print("   ADMIN_IDS=your_user_id")
+        sys.exit(1)
+    
     bot = GoFileBot()
     
     try:
         await bot.start()
+    except KeyboardInterrupt:
+        logger.info("🛑 Bot stopped by user")
     except Exception as e:
-        logger.error(f"❌ Fatal error: {e}")
+        logger.error(f"💥 Bot crashed: {e}")
         sys.exit(1)
 
 
@@ -174,7 +184,7 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("🛑 Bot stopped by user")
+        print("\n🛑 Bot stopped by user")
     except Exception as e:
-        logger.error(f"💥 Bot crashed: {e}")
+        print(f"💥 Bot crashed: {e}")
         sys.exit(1)
